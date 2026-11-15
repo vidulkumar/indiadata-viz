@@ -1,46 +1,75 @@
-import { useState } from 'react';
-import { Region, METRIC_CONFIGS, MetricKey } from '../types';
-import { X, ArrowLeftRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Region, METRIC_CONFIGS, MetricKey, BoundaryLevel } from '../types';
+import { X, ArrowLeftRight, ShieldCheck, ExternalLink } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   regions: Region[];
+  initialRegionA?: Region | null;
 }
 
 const COMPARE_METRICS: MetricKey[] = [
+  'population_density',
   'population',
-  'density',
   'literacy_rate',
-  'aqi_pm25',
+  'sex_ratio',
+  'green_cover_pct',
   'hospitals_count',
   'schools_count',
-  'green_cover_pct',
-  'sex_ratio',
   'avg_circle_rate',
+  'aqi_pm25',
 ];
 
-export default function CompareModal({ isOpen, onClose, regions }: Props) {
+export default function CompareModal({
+  isOpen,
+  onClose,
+  regions,
+  initialRegionA,
+}: Props) {
+  const [tierFilter, setTierFilter] = useState<BoundaryLevel | 'all'>('all');
   const [codeA, setCodeA] = useState<string>('dl-nct');
   const [codeB, setCodeB] = useState<string>('hr-ggn');
 
+  useEffect(() => {
+    if (initialRegionA) {
+      setCodeA(initialRegionA.code);
+      const sameTierPeer = regions.find(
+        (r) => r.level === initialRegionA.level && r.code !== initialRegionA.code
+      );
+      if (sameTierPeer) setCodeB(sameTierPeer.code);
+    }
+  }, [initialRegionA, regions]);
+
   if (!isOpen) return null;
 
-  const regionA = regions.find((r) => r.code === codeA) || regions[0];
-  const regionB = regions.find((r) => r.code === codeB) || regions[1] || regions[0];
+  const filteredPool =
+    tierFilter === 'all' ? regions : regions.filter((r) => r.level === tierFilter);
+
+  const regionA = regions.find((r) => r.code === codeA) || filteredPool[0] || regions[0];
+  const regionB =
+    regions.find((r) => r.code === codeB) ||
+    filteredPool[1] ||
+    regions[1] ||
+    regions[0];
+
+  function handleSwap() {
+    if (!regionA || !regionB) return;
+    setCodeA(regionB.code);
+    setCodeB(regionA.code);
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <ArrowLeftRight className="w-5 h-5 text-sky-400" />
-              Compare Two NCR Regions Side-by-Side
+              Side-by-Side Civic &amp; Governance Comparison
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Compare Census, Air Quality, Infrastructure &amp; Property Metrics across Districts,
-              Constituencies, or Wards
+              Compare Census, Air Quality, Elected Representatives, and Verification Sources across Districts, PCs, ACs, or Wards
             </p>
           </div>
           <button
@@ -52,64 +81,157 @@ export default function CompareModal({ isOpen, onClose, regions }: Props) {
         </div>
 
         <div className="p-6 overflow-y-auto space-y-5 text-sm">
-          {/* Selectors */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-3.5 rounded-xl bg-slate-950 border border-emerald-500/40">
-              <label className="text-[11px] uppercase tracking-wider font-semibold text-emerald-400 block mb-1">
-                Region A
-              </label>
-              <select
-                value={regionA?.code || ''}
-                onChange={(e) => setCodeA(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-medium"
-              >
-                {regions.map((r) => (
-                  <option key={r.code} value={r.code}>
-                    [{r.level.toUpperCase()}] {r.name} ({r.state})
-                  </option>
-                ))}
-              </select>
+          {/* Tier Filter Pills + Swap */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-400">Filter Tier:</span>
+              {(['all', 'district', 'constituency', 'assembly', 'ward'] as const).map(
+                (t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTierFilter(t)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer ${
+                      tierFilter === t
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {t === 'all' ? 'All Tiers' : t.toUpperCase()}
+                  </button>
+                )
+              )}
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-950 border border-sky-500/40">
-              <label className="text-[11px] uppercase tracking-wider font-semibold text-sky-400 block mb-1">
-                Region B
-              </label>
-              <select
-                value={regionB?.code || ''}
-                onChange={(e) => setCodeB(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-medium"
-              >
-                {regions.map((r) => (
-                  <option key={r.code} value={r.code}>
-                    [{r.level.toUpperCase()}] {r.name} ({r.state})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <button
+              onClick={handleSwap}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium cursor-pointer"
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5 text-sky-400" /> Swap Area A &harr; Area B
+            </button>
           </div>
 
-          {/* Metrics Comparison Bars */}
+          {/* Selectors + Elected Representative Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              {
+                label: 'Area A',
+                reg: regionA,
+                setCode: setCodeA,
+                border: 'border-emerald-500/40',
+                accent: 'text-emerald-400',
+              },
+              {
+                label: 'Area B',
+                reg: regionB,
+                setCode: setCodeB,
+                border: 'border-sky-500/40',
+                accent: 'text-sky-400',
+              },
+            ].map((side) => (
+              <div
+                key={side.label}
+                className={`p-4 rounded-xl bg-slate-950 border ${side.border} space-y-3`}
+              >
+                <div>
+                  <label
+                    className={`text-[10px] uppercase tracking-wider font-semibold ${side.accent} block mb-1`}
+                  >
+                    {side.label} ({side.reg?.level.toUpperCase()})
+                  </label>
+                  <select
+                    value={side.reg?.code || ''}
+                    onChange={(e) => side.setCode(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-medium"
+                  >
+                    {filteredPool.slice(0, 300).map((r) => (
+                      <option key={r.code} value={r.code}>
+                        [{r.level.toUpperCase()}] {r.name} ({r.state})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {side.reg && (
+                  <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        {side.reg.rep_role || 'Governance'}
+                      </span>
+                      {side.reg.rep_party && (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-semibold text-amber-300">
+                          {side.reg.rep_party}
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-semibold text-white">
+                      {side.reg.rep_name || 'Official Administrative Jurisdiction'}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+                      {side.reg.rep_source_url && (
+                        <a
+                          href={side.reg.rep_source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-emerald-400 hover:underline"
+                        >
+                          {side.reg.rep_source_label || 'Official Portal'}{' '}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                      {side.reg.rep_affidavit_url && (
+                        <a
+                          href={side.reg.rep_affidavit_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-sky-400 hover:underline"
+                        >
+                          MyNeta / SEC Roll <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Metrics Comparison Bars with % Delta */}
           {regionA && regionB && (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {COMPARE_METRICS.map((key) => {
                 const cfg = METRIC_CONFIGS[key];
-                const valA = Number(regionA[key] ?? 0);
-                const valB = Number(regionB[key] ?? 0);
+                const valA = Number(
+                  key === 'population_density'
+                    ? regionA.population_density || regionA.density || 0
+                    : regionA[key] ?? 0
+                );
+                const valB = Number(
+                  key === 'population_density'
+                    ? regionB.population_density || regionB.density || 0
+                    : regionB[key] ?? 0
+                );
                 const maxVal = Math.max(valA, valB, 1);
                 const pctA = Math.round((valA / maxVal) * 100);
                 const pctB = Math.round((valB / maxVal) * 100);
+                const deltaPct =
+                  valB > 0 ? (((valA - valB) / valB) * 100).toFixed(1) : '0.0';
 
                 return (
                   <div
                     key={key}
-                    className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
+                    className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5"
                   >
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between text-xs tabular-nums">
                       <span className="font-semibold text-emerald-400 font-mono">
                         {valA.toLocaleString('en-IN')} {cfg.unit}
                       </span>
-                      <span className="font-medium text-slate-300">{cfg.label}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-300">{cfg.label}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-400">
+                          {Number(deltaPct) > 0 ? `+${deltaPct}%` : `${deltaPct}%`} Δ
+                        </span>
+                      </div>
                       <span className="font-semibold text-sky-400 font-mono">
                         {valB.toLocaleString('en-IN')} {cfg.unit}
                       </span>

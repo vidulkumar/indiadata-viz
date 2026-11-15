@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Insight, Region } from '../types';
+import { Insight, Region, BoundaryLevel, MetricKey } from '../types';
 import {
   X,
   TrendingUp,
@@ -8,6 +8,8 @@ import {
   IndianRupee,
   Eye,
   Award,
+  CheckCircle2,
+  MapPin,
 } from 'lucide-react';
 
 interface Props {
@@ -15,6 +17,7 @@ interface Props {
   onClose: () => void;
   insights: Insight[];
   regions: Region[];
+  onLoadStoryIntoStudio?: (story: Insight) => void;
 }
 
 export default function CreatorStudioModal({
@@ -22,15 +25,16 @@ export default function CreatorStudioModal({
   onClose,
   insights,
   regions,
+  onLoadStoryIntoStudio,
 }: Props) {
   const [monthlyViews, setMonthlyViews] = useState<number>(25000);
   const [proDownloads, setProDownloads] = useState<number>(40);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
   if (!isOpen) return null;
 
-  // Hybrid monetization calculation from AI Studio spec
-  const adRevenueInr = Math.round((monthlyViews / 1000) * 110 * 0.6); // 60% creator cut of ₹110 RPM
-  const exportRevenueInr = Math.round(proDownloads * 249 * 0.5); // 50% creator share of ₹249 dataset download
+  const adRevenueInr = Math.round((monthlyViews / 1000) * 110 * 0.6);
+  const exportRevenueInr = Math.round(proDownloads * 249 * 0.5);
   const totalCreatorMonthlyInr = adRevenueInr + exportRevenueInr;
 
   function exportRegionsCsv() {
@@ -39,15 +43,18 @@ export default function CreatorStudioModal({
       'name',
       'state',
       'level',
+      'area_sq_km',
       'population',
-      'density',
+      'population_density',
       'literacy_rate',
-      'aqi_pm25',
-      'hospitals_count',
       'sex_ratio',
       'green_cover_pct',
+      'hospitals_count',
       'schools_count',
       'avg_circle_rate',
+      'aqi_pm25',
+      'rep_name',
+      'rep_party',
     ];
     const csvRows = [
       headers.join(','),
@@ -68,7 +75,8 @@ export default function CreatorStudioModal({
       item.region_code
     )}&insight=${item.id}`;
     navigator.clipboard?.writeText(shareUrl);
-    alert(`Copied shareable Data Story link:\n${shareUrl}`);
+    setCopiedId(item.id);
+    setTimeout(() => setCopiedId(null), 3000);
   }
 
   return (
@@ -81,8 +89,7 @@ export default function CreatorStudioModal({
               Creator Data Stories &amp; Hybrid Monetization Studio
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Community researchers publish geo-verified findings to Supabase Postgres &amp; earn
-              from page traffic + cleaned dataset exports
+              Community researchers publish geo-verified findings to Supabase PostgreSQL &amp; earn from traffic + cleaned dataset exports
             </p>
           </div>
           <button
@@ -99,7 +106,7 @@ export default function CreatorStudioModal({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                  Phase 4 Creator Economy Model
+                  Creator Economy RPM Estimator
                 </span>
                 <h3 className="text-sm font-bold text-white mt-1">
                   Creator Revenue Share Estimator (Ad RPM + Cleaned GeoJSON/CSV Exports)
@@ -113,7 +120,7 @@ export default function CreatorStudioModal({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 tabular-nums">
               <div className="p-3.5 rounded-lg bg-slate-950/90 border border-slate-800">
                 <label className="text-xs text-slate-400 flex justify-between">
                   <span>Monthly Insight Page Views</span>
@@ -131,7 +138,10 @@ export default function CreatorStudioModal({
                   className="w-full accent-emerald-500 mt-2 cursor-pointer"
                 />
                 <div className="text-[11px] text-slate-400 mt-1">
-                  60% Ad Revenue Share: <strong className="text-emerald-400">₹{adRevenueInr.toLocaleString('en-IN')}/mo</strong>
+                  60% Ad Revenue Share:{' '}
+                  <strong className="text-emerald-400">
+                    ₹{adRevenueInr.toLocaleString('en-IN')}/mo
+                  </strong>
                 </div>
               </div>
 
@@ -150,7 +160,10 @@ export default function CreatorStudioModal({
                   className="w-full accent-sky-500 mt-2 cursor-pointer"
                 />
                 <div className="text-[11px] text-slate-400 mt-1">
-                  50% Pro Export Share: <strong className="text-sky-400">₹{exportRevenueInr.toLocaleString('en-IN')}/mo</strong>
+                  50% Pro Export Share:{' '}
+                  <strong className="text-sky-400">
+                    ₹{exportRevenueInr.toLocaleString('en-IN')}/mo
+                  </strong>
                 </div>
               </div>
 
@@ -194,9 +207,9 @@ export default function CreatorStudioModal({
                         <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-medium">
                           {reg?.name || item.region_code}
                         </span>
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center gap-2 tabular-nums">
                           <span className="flex items-center gap-1">
-                            <Eye className="w-3 h-3 text-sky-400" /> {item.views_count || 120}
+                            <Eye className="w-3 h-3 text-sky-400" /> {item.views_count || 142}
                           </span>
                           <span>{new Date(item.created_at).toLocaleDateString()}</span>
                         </span>
@@ -209,12 +222,41 @@ export default function CreatorStudioModal({
 
                     <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs">
                       <span className="text-slate-400">By {item.author}</span>
-                      <button
-                        onClick={() => handleShareInsight(item)}
-                        className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium cursor-pointer"
-                      >
-                        <Share2 className="w-3.5 h-3.5" /> Share Story Link
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {onLoadStoryIntoStudio && (
+                          <button
+                            onClick={() => {
+                              onLoadStoryIntoStudio({
+                                ...item,
+                                boundary_level:
+                                  (item.boundary_level as BoundaryLevel) ||
+                                  reg?.level ||
+                                  'district',
+                                metric:
+                                  (item.metric as MetricKey) || 'population_density',
+                              });
+                              onClose();
+                            }}
+                            className="flex items-center gap-1 text-sky-400 hover:text-sky-300 font-medium cursor-pointer"
+                          >
+                            <MapPin className="w-3.5 h-3.5" /> Load into Studio
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleShareInsight(item)}
+                          className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium cursor-pointer"
+                        >
+                          {copiedId === item.id ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Link Copied
+                            </>
+                          ) : (
+                            <>
+                              <Share2 className="w-3.5 h-3.5" /> Copy Link
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
