@@ -27,7 +27,6 @@ import {
   Layers,
   Upload,
   Search,
-  Wind,
   Sun,
   Moon,
   ArrowLeftRight,
@@ -36,12 +35,12 @@ import {
   ShieldCheck,
   LocateFixed,
   BarChart3,
-  Eye,
-  EyeOff,
-  Database,
-  CheckSquare,
-  Square,
   Info,
+  Sliders,
+  Filter,
+  Check,
+  X,
+  Sparkles,
 } from 'lucide-react';
 
 declare global {
@@ -52,6 +51,26 @@ declare global {
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+type LayerCategoryFilter = 'all' | 'environment' | 'demographics' | 'uploaded';
+
+interface UnifiedCatalogItem {
+  id: string;
+  kind: 'builtin' | 'custom';
+  metricKey?: MetricKey;
+  customLayer?: CustomLayer;
+  title: string;
+  shortTitle: string;
+  category: 'environment' | 'demographics' | 'uploaded';
+  categoryLabel: string;
+  geometryLabel: string;
+  unit: string;
+  publisher: string;
+  sourceUrl: string;
+  checked: boolean;
+  opacity: number;
+  color: string;
+}
 
 function getColorForValue(val: number, stops: [number, string][]): string {
   for (let i = stops.length - 1; i >= 0; i--) {
@@ -129,10 +148,23 @@ export function App() {
     'green_cover_pct',
     'aqi_pm25',
   ]);
+  const [metricOpacities, setMetricOpacities] = useState<Record<MetricKey, number>>({
+    green_cover_pct: 0.68,
+    aqi_pm25: 0.78,
+    population_density: 0.68,
+    literacy_rate: 0.68,
+    sex_ratio: 0.68,
+  });
+
   const [showAqiLayer, setShowAqiLayer] = useState<boolean>(true);
   const [aqiDisplayMode, setAqiDisplayMode] = useState<AqiDisplayMode>('both');
 
-  // Search & Selection
+  // Left Panel Search & Category Filter
+  const [layerSearchQuery, setLayerSearchQuery] = useState<string>('');
+  const [layerCategoryFilter, setLayerCategoryFilter] =
+    useState<LayerCategoryFilter>('all');
+
+  // Region Search & Selection
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [selectedStation, setSelectedStation] = useState<AqiStation | null>(null);
@@ -156,7 +188,6 @@ export function App() {
     ward: [],
   });
   const [, setLoadingTier] = useState<boolean>(true);
-  const [dataSourceBadge, setDataSourceBadge] = useState<string>('Loading GIS Boundaries…');
 
   // Verified CPCB stations + optional live sync from data.gov.in
   const [aqiStations, setAqiStations] = useState<AqiStation[]>(VERIFIED_CPCB_STATIONS);
@@ -177,18 +208,17 @@ export function App() {
   const mapReadyRef = useRef<boolean>(false);
   const stationMarkersRef = useRef<any[]>([]);
   const customPointMarkersRef = useRef<any[]>([]);
+  const allRegionsRef = useRef<Region[]>([]);
 
-  // ─── 1. Load Verified GIS Boundaries (Local SQLite on localhost -> Supabase -> Edge GeoJSON) ─
+  // ─── 1. Load Verified GIS Boundaries ───────────────────────────────────────
   const fetchTierBoundaries = useCallback(
     async (tier: BoundaryLevel): Promise<Region[]> => {
-      // A. Try Local SQLite API first when running on localhost
       if (isLocalhost) {
         try {
           const localRes = await fetch(`/api/local/boundaries?level=${tier}`);
           if (localRes.ok) {
             const fc = await localRes.json();
             if (Array.isArray(fc.features) && fc.features.length > 0) {
-              setDataSourceBadge('Local SQLite DB (data/indiadata-local.sqlite)');
               return fc.features.map((f: any) => ({
                 ...f.properties,
                 geojson: f.geometry,
@@ -200,7 +230,6 @@ export function App() {
         }
       }
 
-      // B. Try Supabase PostgreSQL `boundary_features`
       if (supabase) {
         try {
           const { data, error } = await supabase
@@ -210,7 +239,6 @@ export function App() {
             .order('code', { ascending: true });
 
           if (!error && data && data.length > 0) {
-            setDataSourceBadge('Supabase PostgreSQL + PostGIS');
             return data.map((row: any) => ({
               ...(row.properties || {}),
               code: row.code,
@@ -264,11 +292,10 @@ export function App() {
             }));
           }
         } catch {
-          // fallback to edge static GeoJSON
+          // fallback to static GeoJSON
         }
       }
 
-      // C. Static Edge GeoJSON fallback
       const fileMap: Record<BoundaryLevel, string> = {
         district: '/boundaries/districts.geojson',
         constituency: '/boundaries/constituencies.geojson',
@@ -277,7 +304,6 @@ export function App() {
       };
       const res = await fetch(fileMap[tier]);
       const fc = await res.json();
-      setDataSourceBadge('Edge Verified GeoJSON');
       return (fc.features || []).map((f: any) => ({
         ...f.properties,
         geojson: f.geometry,
@@ -286,7 +312,6 @@ export function App() {
     []
   );
 
-  // Load initial districts + background-load all tiers so Upload auto-mapper has all 740 polygons
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -301,7 +326,6 @@ export function App() {
       }
       setLoadingTier(false);
 
-      // Load remaining tiers in background
       const [pcs, acs, wards] = await Promise.all([
         fetchTierBoundaries('constituency'),
         fetchTierBoundaries('assembly'),
@@ -320,7 +344,7 @@ export function App() {
     };
   }, [fetchTierBoundaries]);
 
-  // Load user-uploaded layers from Local SQLite or Supabase (excluding archived mock layers)
+  // Load user-uploaded layers
   useEffect(() => {
     (async () => {
       try {
@@ -366,7 +390,7 @@ export function App() {
               license: r.license,
               color: r.color || '#14b8a6',
               visible: false,
-              opacity: 0.78,
+              opacity: 0.75,
               featureCount: r.feature_count,
               availableDates: dates,
               activeDate,
@@ -383,7 +407,7 @@ export function App() {
     })();
   }, []);
 
-  // Detect user's current district via browser GPS + Point-in-Polygon check
+  // Detect user's current district via GPS + Point-in-Polygon check
   useEffect(() => {
     const districts = regionsByTier.district;
     if (districts.length === 0) return;
@@ -421,7 +445,11 @@ export function App() {
     [regionsByTier]
   );
 
-  // Filter current tier regions by Focus Hub (Current Location District by default!)
+  useEffect(() => {
+    allRegionsRef.current = allRegions;
+  }, [allRegions]);
+
+  // Filter current tier regions by Focus Hub (Current Location District by default)
   const activeTierRegions = useMemo(() => {
     const raw = regionsByTier[boundaryLevel] || [];
     if (focusHub === 'all') return raw;
@@ -452,7 +480,7 @@ export function App() {
     );
   }, [activeTierRegions, searchQuery]);
 
-  // Active Custom Choropleth Layer (if user toggled an uploaded choropleth layer ON)
+  // Active Custom Choropleth Layer
   const activeCustomChoropleth = useMemo(() => {
     if (activeCustomChoroplethId) {
       const found = customLayers.find(
@@ -460,12 +488,32 @@ export function App() {
       );
       if (found) return found;
     }
-    return (
-      customLayers.find((l) => l.visible && l.type === 'choropleth') || null
-    );
+    return customLayers.find((l) => l.visible && l.type === 'choropleth') || null;
   }, [customLayers, activeCustomChoroplethId]);
 
-  // Get metric value for choropleth coloring
+  // Active Choropleth Fill Opacity
+  const activeChoroplethOpacity = useMemo(() => {
+    if (activeCustomChoropleth) {
+      return activeCustomChoropleth.opacity ?? 0.72;
+    }
+    if (selectedMetrics.includes(activeMetric)) {
+      return metricOpacities[activeMetric] ?? 0.68;
+    }
+    const firstCheckedChoropleth = selectedMetrics.find((m) => m !== 'aqi_pm25') || selectedMetrics[0];
+    if (firstCheckedChoropleth) {
+      return metricOpacities[firstCheckedChoropleth] ?? 0.68;
+    }
+    return 0.08;
+  }, [activeCustomChoropleth, selectedMetrics, activeMetric, metricOpacities]);
+
+  // Effective Metric Key coloring the polygons
+  const effectiveChoroplethMetric = useMemo<MetricKey | null>(() => {
+    if (activeCustomChoropleth) return null;
+    if (selectedMetrics.includes(activeMetric)) return activeMetric;
+    const fallback = selectedMetrics.find((k) => k !== 'aqi_pm25') || selectedMetrics[0];
+    return fallback || null;
+  }, [activeCustomChoropleth, selectedMetrics, activeMetric]);
+
   const getRegionChoroplethValue = useCallback(
     (region: Region): number => {
       if (
@@ -480,66 +528,178 @@ export function App() {
         const val = activeCustomChoropleth.choroplethByDate[dateKey]?.[region.code];
         if (typeof val === 'number') return val;
       }
-      if (activeMetric === 'population_density') {
+      const mKey = effectiveChoroplethMetric || 'green_cover_pct';
+      if (mKey === 'population_density') {
         return Number(region.population_density || region.density || 0);
       }
-      return Number(region[activeMetric] ?? 0);
+      return Number(region[mKey] ?? 0);
     },
-    [activeCustomChoropleth, activeMetric]
+    [activeCustomChoropleth, effectiveChoroplethMetric]
   );
 
-  // ─── Initialize MapLibre GL Map ─────────────────────────────────────────────
-  useEffect(() => {
-    if (currentPage !== 'map') return;
-    if (!mapContainerRef.current || !window.maplibregl) return;
-    if (mapRef.current) return;
+  // ─── Unified Left-Panel Catalog (Checked on Top, then Alphabetical A→Z) ────
+  const unifiedCatalogItems = useMemo<UnifiedCatalogItem[]>(() => {
+    const builtinKeys: MetricKey[] = [
+      'green_cover_pct',
+      'aqi_pm25',
+      'literacy_rate',
+      'population_density',
+      'sex_ratio',
+    ];
 
-    const map = new window.maplibregl.Map({
-      container: mapContainerRef.current,
-      style: isDarkMode ? DARK_STYLE : LIGHT_STYLE,
-      center: [77.209, 28.6139],
-      zoom: 10.1,
-      attributionControl: false,
+    const builtins: UnifiedCatalogItem[] = builtinKeys.map((key) => {
+      const cfg = METRIC_CONFIGS[key];
+      const isEnv = key === 'green_cover_pct' || key === 'aqi_pm25';
+      const checked =
+        key === 'aqi_pm25'
+          ? selectedMetrics.includes('aqi_pm25') || showAqiLayer
+          : selectedMetrics.includes(key);
+
+      return {
+        id: `builtin-${key}`,
+        kind: 'builtin',
+        metricKey: key,
+        title: cfg.label,
+        shortTitle: cfg.shortLabel,
+        category: isEnv ? 'environment' : 'demographics',
+        categoryLabel: isEnv ? 'Environment' : 'Demographics',
+        geometryLabel: key === 'aqi_pm25' ? 'Stations + IDW + Fill' : 'Polygon Choropleth',
+        unit: cfg.unit,
+        publisher: cfg.sourceLabel,
+        sourceUrl: cfg.sourceUrl,
+        checked,
+        opacity: metricOpacities[key] ?? 0.68,
+        color: key === 'aqi_pm25' ? '#f59e0b' : '#10b981',
+      };
     });
 
-    map.addControl(new window.maplibregl.NavigationControl(), 'bottom-right');
-    mapRef.current = map;
+    const uploaded: UnifiedCatalogItem[] = customLayers.map((layer) => ({
+      id: layer.id,
+      kind: 'custom',
+      customLayer: layer,
+      title: layer.name,
+      shortTitle: layer.metricLabel || layer.name,
+      category: 'uploaded',
+      categoryLabel: `Uploaded (${layer.boundaryLevel?.toUpperCase() || 'GPS'})`,
+      geometryLabel:
+        layer.type === 'point'
+          ? `GPS Points (${layer.featureCount})`
+          : `${layer.boundaryLevel?.toUpperCase()} Polygons (${layer.featureCount})`,
+      unit: layer.unit || '',
+      publisher: layer.publisher || 'Verified Contributor',
+      sourceUrl: layer.sourceUrl || '',
+      checked: Boolean(layer.visible),
+      opacity: layer.opacity ?? 0.75,
+      color: layer.color || '#14b8a6',
+    }));
 
-    map.on('load', () => {
-      mapReadyRef.current = true;
-      renderBoundariesOnMap();
-      renderIdwCanvasOverlay();
-    });
+    const combined = [...builtins, ...uploaded];
 
-    return () => {
-      mapReadyRef.current = false;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+    // Filter by category pill and search input
+    const q = layerSearchQuery.toLowerCase().trim();
+    const filtered = combined.filter((item) => {
+      if (layerCategoryFilter !== 'all' && item.category !== layerCategoryFilter) {
+        return false;
       }
-    };
-  }, [currentPage]);
-
-  // Update basemap theme
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReadyRef.current) return;
-    map.setStyle(isDarkMode ? DARK_STYLE : LIGHT_STYLE);
-    map.once('styledata', () => {
-      renderBoundariesOnMap();
-      renderIdwCanvasOverlay();
+      if (!q) return true;
+      return (
+        item.title.toLowerCase().includes(q) ||
+        item.shortTitle.toLowerCase().includes(q) ||
+        item.publisher.toLowerCase().includes(q) ||
+        item.categoryLabel.toLowerCase().includes(q) ||
+        item.geometryLabel.toLowerCase().includes(q)
+      );
     });
-  }, [isDarkMode]);
 
-  // ─── Render High-Detail GIS Polygons on MapLibre ───────────────────────────
+    // Sort: Checked items on TOP (alphabetical A→Z), then Unchecked items below (alphabetical A→Z)
+    return filtered.sort((a, b) => {
+      if (a.checked !== b.checked) {
+        return a.checked ? -1 : 1;
+      }
+      return a.title.localeCompare(b.title);
+    });
+  }, [
+    selectedMetrics,
+    showAqiLayer,
+    metricOpacities,
+    customLayers,
+    layerSearchQuery,
+    layerCategoryFilter,
+  ]);
+
+  // Toggle any layer cleanly (no sticky/buggy lock)
+  const handleToggleLayerCheck = (item: UnifiedCatalogItem) => {
+    if (item.kind === 'builtin' && item.metricKey) {
+      const key = item.metricKey;
+      const currentlyChecked = item.checked;
+
+      if (key === 'aqi_pm25') {
+        const nextChecked = !currentlyChecked;
+        setShowAqiLayer(nextChecked);
+        setSelectedMetrics((prev) =>
+          nextChecked
+            ? prev.includes('aqi_pm25')
+              ? prev
+              : [...prev, 'aqi_pm25']
+            : prev.filter((k) => k !== 'aqi_pm25')
+        );
+        return;
+      }
+
+      setSelectedMetrics((prev) => {
+        const next = currentlyChecked
+          ? prev.filter((k) => k !== key)
+          : [...prev, key];
+        if (!currentlyChecked) {
+          setActiveMetric(key);
+          setActiveCustomChoroplethId(null);
+        } else if (activeMetric === key) {
+          const remaining = next.find((k) => k !== 'aqi_pm25') || next[0];
+          if (remaining) setActiveMetric(remaining);
+        }
+        return next;
+      });
+    } else if (item.kind === 'custom' && item.customLayer) {
+      const targetId = item.customLayer.id;
+      const nextVisible = !item.checked;
+      setCustomLayers((prev) =>
+        prev.map((l) => (l.id === targetId ? { ...l, visible: nextVisible } : l))
+      );
+      if (nextVisible && item.customLayer.type === 'choropleth') {
+        setActiveCustomChoroplethId(targetId);
+        if (item.customLayer.boundaryLevel) {
+          setBoundaryLevel(item.customLayer.boundaryLevel);
+        }
+      } else if (!nextVisible && activeCustomChoroplethId === targetId) {
+        setActiveCustomChoroplethId(null);
+      }
+    }
+  };
+
+  // Change opacity for any layer
+  const handleLayerOpacityChange = (item: UnifiedCatalogItem, newOpacity: number) => {
+    if (item.kind === 'builtin' && item.metricKey) {
+      setMetricOpacities((prev) => ({
+        ...prev,
+        [item.metricKey!]: newOpacity,
+      }));
+    } else if (item.kind === 'custom' && item.customLayer) {
+      const targetId = item.customLayer.id;
+      setCustomLayers((prev) =>
+        prev.map((l) => (l.id === targetId ? { ...l, opacity: newOpacity } : l))
+      );
+    }
+  };
+
+  // ─── Render High-Detail GIS Polygons on MapLibre (Dark & Light Mode Safe) ──
   const renderBoundariesOnMap = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
 
-    const cfg = METRIC_CONFIGS[activeMetric];
+    const mKey = effectiveChoroplethMetric || 'green_cover_pct';
+    const cfg = METRIC_CONFIGS[mKey];
     let stops = cfg.stops;
 
-    // If an uploaded choropleth layer is active on this tier, compute dynamic stops
     if (
       activeCustomChoropleth &&
       activeCustomChoropleth.boundaryLevel === boundaryLevel &&
@@ -566,6 +726,9 @@ export function App() {
       }
     }
 
+    const hasActiveChoropleth =
+      Boolean(activeCustomChoropleth) || Boolean(effectiveChoroplethMetric);
+
     const features = searchedRegions
       .filter((r) => r.geojson)
       .map((r) => {
@@ -585,92 +748,140 @@ export function App() {
 
     const fc = { type: 'FeatureCollection', features };
 
-    if (map.getSource('ncr-boundaries')) {
-      map.getSource('ncr-boundaries').setData(fc);
-    } else {
-      map.addSource('ncr-boundaries', {
-        type: 'geojson',
-        data: fc,
-      });
+    // Parent district backdrop outline when viewing Municipal Wards
+    const districtBackdropFeatures =
+      boundaryLevel === 'ward'
+        ? (regionsByTier.district || [])
+            .filter((d) => d.geojson)
+            .map((d) => ({
+              type: 'Feature',
+              properties: { code: d.code, name: d.name },
+              geometry: d.geojson,
+            }))
+        : [];
+    const backdropFc = {
+      type: 'FeatureCollection',
+      features: districtBackdropFeatures,
+    };
 
-      map.addLayer({
-        id: 'ncr-boundaries-fill',
-        type: 'fill',
-        source: 'ncr-boundaries',
-        paint: {
-          'fill-color': ['get', 'fillColor'],
-          'fill-opacity': [
+    try {
+      if (map.getSource('ncr-district-backdrop')) {
+        map.getSource('ncr-district-backdrop').setData(backdropFc);
+      } else {
+        map.addSource('ncr-district-backdrop', {
+          type: 'geojson',
+          data: backdropFc,
+        });
+        map.addLayer({
+          id: 'ncr-district-backdrop-line',
+          type: 'line',
+          source: 'ncr-district-backdrop',
+          paint: {
+            'line-color': isDarkMode ? '#64748b' : '#475569',
+            'line-width': 1.5,
+            'line-dasharray': [3, 2],
+            'line-opacity': 0.55,
+          },
+        });
+      }
+
+      if (map.getLayer('ncr-district-backdrop-line')) {
+        map.setPaintProperty(
+          'ncr-district-backdrop-line',
+          'line-color',
+          isDarkMode ? '#64748b' : '#475569'
+        );
+      }
+
+      const baseFillOpacity = hasActiveChoropleth ? activeChoroplethOpacity : 0.04;
+      const selectedFillOpacity = hasActiveChoropleth
+        ? Math.min(0.92, activeChoroplethOpacity + 0.16)
+        : 0.15;
+
+      const baseStrokeColor = isDarkMode ? '#475569' : '#334155';
+      const selectedStrokeColor = isDarkMode ? '#2dd4bf' : '#0f766e';
+
+      if (map.getSource('ncr-boundaries')) {
+        map.getSource('ncr-boundaries').setData(fc);
+        if (map.getLayer('ncr-boundaries-fill')) {
+          map.setPaintProperty('ncr-boundaries-fill', 'fill-opacity', [
             'case',
             ['==', ['get', 'isSelected'], 1],
-            0.78,
-            0.56,
-          ],
-        },
-      });
-
-      map.addLayer({
-        id: 'ncr-boundaries-line',
-        type: 'line',
-        source: 'ncr-boundaries',
-        paint: {
-          'line-color': [
+            selectedFillOpacity,
+            baseFillOpacity,
+          ]);
+        }
+        if (map.getLayer('ncr-boundaries-line')) {
+          map.setPaintProperty('ncr-boundaries-line', 'line-color', [
             'case',
             ['==', ['get', 'isSelected'], 1],
-            '#2dd4bf',
-            isDarkMode ? '#334155' : '#64748b',
-          ],
-          'line-width': ['case', ['==', ['get', 'isSelected'], 1], 2.6, 1.1],
-        },
-      });
-
-      map.on('mousemove', 'ncr-boundaries-fill', (e: any) => {
-        map.getCanvas().style.cursor = 'pointer';
-        const code = e.features?.[0]?.properties?.code;
-        if (!code) return;
-        const found = allRegions.find((r) => r.code === code);
-        if (found) {
-          setHoveredFeature({
-            region: found,
-            x: e.point.x,
-            y: e.point.y,
-          });
+            selectedStrokeColor,
+            baseStrokeColor,
+          ]);
+          map.setPaintProperty('ncr-boundaries-line', 'line-width', [
+            'case',
+            ['==', ['get', 'isSelected'], 1],
+            2.8,
+            boundaryLevel === 'ward' ? 0.75 : 1.25,
+          ]);
         }
-      });
+      } else {
+        map.addSource('ncr-boundaries', {
+          type: 'geojson',
+          data: fc,
+        });
 
-      map.on('mouseleave', 'ncr-boundaries-fill', () => {
-        map.getCanvas().style.cursor = '';
-        setHoveredFeature(null);
-      });
+        map.addLayer({
+          id: 'ncr-boundaries-fill',
+          type: 'fill',
+          source: 'ncr-boundaries',
+          paint: {
+            'fill-color': ['get', 'fillColor'],
+            'fill-opacity': [
+              'case',
+              ['==', ['get', 'isSelected'], 1],
+              selectedFillOpacity,
+              baseFillOpacity,
+            ],
+          },
+        });
 
-      map.on('click', 'ncr-boundaries-fill', (e: any) => {
-        const code = e.features?.[0]?.properties?.code;
-        if (!code) return;
-        const found = allRegions.find((r) => r.code === code);
-        if (found) {
-          setSelectedStation(null);
-          setSelectedRegion(found);
-          if (found.center) {
-            map.flyTo({ center: found.center, duration: 650 });
-          }
-        }
-      });
+        map.addLayer({
+          id: 'ncr-boundaries-line',
+          type: 'line',
+          source: 'ncr-boundaries',
+          paint: {
+            'line-color': [
+              'case',
+              ['==', ['get', 'isSelected'], 1],
+              selectedStrokeColor,
+              baseStrokeColor,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['get', 'isSelected'], 1],
+              2.8,
+              boundaryLevel === 'ward' ? 0.75 : 1.25,
+            ],
+          },
+        });
+      }
+    } catch {
+      // style transition in progress
     }
   }, [
     searchedRegions,
-    activeMetric,
+    effectiveChoroplethMetric,
     activeCustomChoropleth,
+    activeChoroplethOpacity,
     boundaryLevel,
     selectedRegion,
     isDarkMode,
-    allRegions,
+    regionsByTier.district,
     getRegionChoroplethValue,
   ]);
 
-  useEffect(() => {
-    renderBoundariesOnMap();
-  }, [renderBoundariesOnMap]);
-
-  // ─── Render IDW Continuous Pollution Field + Verified CPCB Station Markers ─
+  // ─── Render IDW Continuous Pollution Field ─────────────────────────────────
   const renderIdwCanvasOverlay = useCallback(() => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
@@ -678,100 +889,191 @@ export function App() {
     const showField =
       showAqiLayer && (aqiDisplayMode === 'blended' || aqiDisplayMode === 'both');
 
-    if (!showField || aqiStations.length === 0) {
+    try {
+      if (!showField || aqiStations.length === 0) {
+        if (map.getLayer('cpcb-idw-layer')) map.removeLayer('cpcb-idw-layer');
+        if (map.getSource('cpcb-idw-source')) map.removeSource('cpcb-idw-source');
+        return;
+      }
+
+      const west = 76.5;
+      const east = 77.75;
+      const north = 29.15;
+      const south = 28.2;
+      const width = 180;
+      const height = 140;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const imgData = ctx.createImageData(width, height);
+      const data = imgData.data;
+
+      const aqiColorRgb = (aqi: number): [number, number, number] => {
+        if (aqi <= 150) return [34, 197, 94];
+        if (aqi <= 220) return [132, 204, 22];
+        if (aqi <= 280) return [234, 179, 8];
+        if (aqi <= 330) return [249, 115, 22];
+        return [239, 68, 68];
+      };
+
+      const aqiLayerOpacity = metricOpacities.aqi_pm25 ?? 0.78;
+
+      for (let y = 0; y < height; y++) {
+        const lat = north - (y / height) * (north - south);
+        for (let x = 0; x < width; x++) {
+          const lon = west + (x / width) * (east - west);
+          let weightSum = 0;
+          let valSum = 0;
+          let minDistKm = Infinity;
+
+          for (const st of aqiStations) {
+            const dLat = (lat - st.lat) * 111;
+            const dLon = (lon - st.lon) * 97.5;
+            const distSq = dLat * dLat + dLon * dLon;
+            const distKm = Math.sqrt(distSq);
+            if (distKm < minDistKm) minDistKm = distKm;
+            const w = 1 / Math.max(distSq, 0.25);
+            weightSum += w;
+            valSum += w * st.aqi;
+          }
+
+          const idx = (y * width + x) * 4;
+          if (minDistKm > 22) {
+            data[idx + 3] = 0;
+            continue;
+          }
+          const idwAqi = valSum / weightSum;
+          const [r, g, b] = aqiColorRgb(idwAqi);
+          const fade = Math.max(0, 1 - minDistKm / 22);
+          data[idx] = r;
+          data[idx + 1] = g;
+          data[idx + 2] = b;
+          data[idx + 3] = Math.round(fade * 95);
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      const dataUrl = canvas.toDataURL('image/png');
+
       if (map.getLayer('cpcb-idw-layer')) map.removeLayer('cpcb-idw-layer');
       if (map.getSource('cpcb-idw-source')) map.removeSource('cpcb-idw-source');
-      return;
+
+      map.addSource('cpcb-idw-source', {
+        type: 'image',
+        url: dataUrl,
+        coordinates: [
+          [west, north],
+          [east, north],
+          [east, south],
+          [west, south],
+        ],
+      });
+
+      map.addLayer({
+        id: 'cpcb-idw-layer',
+        type: 'raster',
+        source: 'cpcb-idw-source',
+        paint: { 'raster-opacity': aqiLayerOpacity },
+      });
+    } catch {
+      // style transition in progress
     }
+  }, [showAqiLayer, aqiDisplayMode, aqiStations, metricOpacities.aqi_pm25]);
 
-    const west = 76.5;
-    const east = 77.75;
-    const north = 29.15;
-    const south = 28.2;
-    const width = 180;
-    const height = 140;
+  // ─── Initialize MapLibre GL Map & Event Listeners ──────────────────────────
+  useEffect(() => {
+    if (currentPage !== 'map') return;
+    if (!mapContainerRef.current || !window.maplibregl) return;
+    if (mapRef.current) return;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const map = new window.maplibregl.Map({
+      container: mapContainerRef.current,
+      style: isDarkMode ? DARK_STYLE : LIGHT_STYLE,
+      center: [77.209, 28.6139],
+      zoom: 10.1,
+      attributionControl: false,
+    });
 
-    const imgData = ctx.createImageData(width, height);
-    const data = imgData.data;
+    map.addControl(new window.maplibregl.NavigationControl(), 'bottom-right');
+    mapRef.current = map;
 
-    const aqiColorRgb = (aqi: number): [number, number, number] => {
-      if (aqi <= 150) return [34, 197, 94];
-      if (aqi <= 220) return [132, 204, 22];
-      if (aqi <= 280) return [234, 179, 8];
-      if (aqi <= 330) return [249, 115, 22];
-      return [239, 68, 68];
-    };
+    map.on('load', () => {
+      mapReadyRef.current = true;
+      renderBoundariesOnMap();
+      renderIdwCanvasOverlay();
+    });
 
-    for (let y = 0; y < height; y++) {
-      const lat = north - (y / height) * (north - south);
-      for (let x = 0; x < width; x++) {
-        const lon = west + (x / width) * (east - west);
-        let weightSum = 0;
-        let valSum = 0;
-        let minDistKm = Infinity;
-
-        for (const st of aqiStations) {
-          const dLat = (lat - st.lat) * 111;
-          const dLon = (lon - st.lon) * 97.5;
-          const distSq = dLat * dLat + dLon * dLon;
-          const distKm = Math.sqrt(distSq);
-          if (distKm < minDistKm) minDistKm = distKm;
-          const w = 1 / Math.max(distSq, 0.25);
-          weightSum += w;
-          valSum += w * st.aqi;
-        }
-
-        const idx = (y * width + x) * 4;
-        if (minDistKm > 22) {
-          data[idx + 3] = 0;
-          continue;
-        }
-        const idwAqi = valSum / weightSum;
-        const [r, g, b] = aqiColorRgb(idwAqi);
-        const fade = Math.max(0, 1 - minDistKm / 22);
-        data[idx] = r;
-        data[idx + 1] = g;
-        data[idx + 2] = b;
-        data[idx + 3] = Math.round(fade * 88);
+    map.on('mousemove', 'ncr-boundaries-fill', (e: any) => {
+      map.getCanvas().style.cursor = 'pointer';
+      const code = e.features?.[0]?.properties?.code;
+      if (!code) return;
+      const found = allRegionsRef.current.find((r) => r.code === code);
+      if (found) {
+        setHoveredFeature({
+          region: found,
+          x: e.point.x,
+          y: e.point.y,
+        });
       }
-    }
-
-    ctx.putImageData(imgData, 0, 0);
-    const dataUrl = canvas.toDataURL('image/png');
-
-    if (map.getLayer('cpcb-idw-layer')) map.removeLayer('cpcb-idw-layer');
-    if (map.getSource('cpcb-idw-source')) map.removeSource('cpcb-idw-source');
-
-    map.addSource('cpcb-idw-source', {
-      type: 'image',
-      url: dataUrl,
-      coordinates: [
-        [west, north],
-        [east, north],
-        [east, south],
-        [west, south],
-      ],
     });
 
-    map.addLayer({
-      id: 'cpcb-idw-layer',
-      type: 'raster',
-      source: 'cpcb-idw-source',
-      paint: { 'raster-opacity': 0.72 },
+    map.on('mouseleave', 'ncr-boundaries-fill', () => {
+      map.getCanvas().style.cursor = '';
+      setHoveredFeature(null);
     });
-  }, [showAqiLayer, aqiDisplayMode, aqiStations]);
+
+    map.on('click', 'ncr-boundaries-fill', (e: any) => {
+      const code = e.features?.[0]?.properties?.code;
+      if (!code) return;
+      const found = allRegionsRef.current.find((r) => r.code === code);
+      if (found) {
+        setSelectedStation(null);
+        setSelectedRegion(found);
+        if (found.center) {
+          map.flyTo({ center: found.center, duration: 650 });
+        }
+      }
+    });
+
+    return () => {
+      mapReadyRef.current = false;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [currentPage]);
+
+  // Handle Dark / Light Mode Basemap Switch Cleanly (Wait for style.load!)
+  const prevDarkModeRef = useRef<boolean>(isDarkMode);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (prevDarkModeRef.current === isDarkMode) return;
+    prevDarkModeRef.current = isDarkMode;
+
+    mapReadyRef.current = false;
+    map.setStyle(isDarkMode ? DARK_STYLE : LIGHT_STYLE);
+    map.once('style.load', () => {
+      mapReadyRef.current = true;
+      renderBoundariesOnMap();
+      renderIdwCanvasOverlay();
+    });
+  }, [isDarkMode, renderBoundariesOnMap, renderIdwCanvasOverlay]);
+
+  useEffect(() => {
+    renderBoundariesOnMap();
+  }, [renderBoundariesOnMap]);
 
   useEffect(() => {
     renderIdwCanvasOverlay();
   }, [renderIdwCanvasOverlay]);
 
-  // Render CPCB Station HTML Markers
+  // Render CPCB Station HTML Markers (with live opacity support)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -782,6 +1084,8 @@ export function App() {
     const showDots =
       showAqiLayer && (aqiDisplayMode === 'stations' || aqiDisplayMode === 'both');
     if (!showDots) return;
+
+    const aqiOpacity = metricOpacities.aqi_pm25 ?? 0.78;
 
     aqiStations.forEach((st) => {
       const el = document.createElement('div');
@@ -796,6 +1100,7 @@ export function App() {
       el.className =
         'px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold text-slate-950 shadow-lg border border-slate-950/60 cursor-pointer transition-transform hover:scale-110';
       el.style.backgroundColor = bg;
+      el.style.opacity = String(Math.max(0.25, Math.min(1, aqiOpacity + 0.15)));
       el.textContent = `${st.aqi}`;
 
       el.addEventListener('mouseenter', (ev) => {
@@ -820,7 +1125,7 @@ export function App() {
         .addTo(map);
       stationMarkersRef.current.push(marker);
     });
-  }, [showAqiLayer, aqiDisplayMode, aqiStations, currentPage]);
+  }, [showAqiLayer, aqiDisplayMode, aqiStations, metricOpacities.aqi_pm25, currentPage]);
 
   // Render Custom Uploaded Point Layers
   useEffect(() => {
@@ -840,6 +1145,7 @@ export function App() {
           el.className =
             'w-3.5 h-3.5 rounded-full border-2 border-white shadow-md cursor-pointer';
           el.style.backgroundColor = layer.color || '#14b8a6';
+          el.style.opacity = String(layer.opacity ?? 0.85);
           el.title = `${f.properties?.name || layer.name}: ${f.properties?.value ?? ''} ${layer.unit || ''}`;
           const marker = new window.maplibregl.Marker({ element: el })
             .setLngLat([coords[0], coords[1]])
@@ -869,20 +1175,6 @@ export function App() {
         const dist = regionsByTier.district.find((d) => d.code === cfg.regionCode);
         if (dist) setSelectedRegion(dist);
       }
-    }
-  };
-
-  // Toggle Left Panel Metric Layer Selection
-  const toggleMetricSelection = (key: MetricKey) => {
-    setSelectedMetrics((prev) => {
-      const exists = prev.includes(key);
-      const next = exists ? prev.filter((k) => k !== key) : [...prev, key];
-      return next.length > 0 ? next : [key];
-    });
-    setActiveMetric(key);
-    setActiveCustomChoroplethId(null);
-    if (key === 'aqi_pm25') {
-      setShowAqiLayer(true);
     }
   };
 
@@ -927,7 +1219,7 @@ export function App() {
     }
   };
 
-  // Publish layer from Dedicated Upload Page (`/upload`) -> Save to DB -> Activate on Home Map
+  // Publish layer from Dedicated Upload Page (`/upload`)
   const handlePublishLayer = async (newLayer: CustomLayer) => {
     try {
       const endpoint = isLocalhost
@@ -981,45 +1273,52 @@ export function App() {
     );
   }
 
-  const activeMetricCfg = METRIC_CONFIGS[activeMetric];
+  const activeMetricCfg = METRIC_CONFIGS[effectiveChoroplethMetric || 'green_cover_pct'];
+  const checkedCount = unifiedCatalogItems.filter((i) => i.checked).length;
 
   return (
     <div
-      className={`h-screen w-screen overflow-hidden flex flex-col select-none ${
+      className={`h-screen w-screen overflow-hidden flex flex-col select-none transition-colors ${
         isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
       }`}
     >
-      {/* ─── TOP HEADER BAR ────────────────────────────────────────────────── */}
+      {/* ─── TOP HEADER BAR (No Tech Stack Mentions) ───────────────────────── */}
       <header
         className={`h-14 shrink-0 border-b px-4 flex items-center justify-between z-20 ${
           isDarkMode
             ? 'bg-slate-900/95 border-slate-800'
-            : 'bg-white/95 border-slate-200'
+            : 'bg-white/95 border-slate-200 shadow-xs'
         }`}
       >
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-teal-500/20 border border-teal-500/40 flex items-center justify-center">
-            <MapIcon className="w-4 h-4 text-teal-400" />
+            <MapIcon className="w-4 h-4 text-teal-500" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-sm tracking-tight">IndiaData.viz</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-500/15 text-teal-400 font-semibold border border-teal-500/30">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-500/15 text-teal-500 font-semibold border border-teal-500/30">
                 Verified Civic GIS
               </span>
-              <span className="hidden md:inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                <Database className="w-3 h-3 text-emerald-400" />
-                {dataSourceBadge}
-              </span>
             </div>
-            <p className="text-[10px] text-slate-400 hidden sm:block">
-              Survey-Grade LGD &amp; DataMeet Boundaries • FSI ISFR 2023 Green Cover • CPCB CAAQMS Air Quality
+            <p
+              className={`text-[10px] hidden sm:block ${
+                isDarkMode ? 'text-slate-400' : 'text-slate-500'
+              }`}
+            >
+              Official Administrative Boundaries • Forest Survey of India (ISFR) • CPCB Air Quality
             </p>
           </div>
         </div>
 
         {/* Administrative Boundary Tier Switcher */}
-        <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+        <div
+          className={`flex items-center gap-1 p-1 rounded-xl border ${
+            isDarkMode
+              ? 'bg-slate-950/80 border-slate-800'
+              : 'bg-slate-100 border-slate-200'
+          }`}
+        >
           {(
             [
               { id: 'district', label: 'Districts (7)' },
@@ -1037,8 +1336,10 @@ export function App() {
               }}
               className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 boundaryLevel === t.id
-                  ? 'bg-teal-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-teal-500 text-slate-950 shadow-xs'
+                  : isDarkMode
+                    ? 'text-slate-400 hover:text-white'
+                    : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               {t.label}
@@ -1046,13 +1347,17 @@ export function App() {
           ))}
         </div>
 
-        {/* Right Actions: Dedicated Upload Page Button + Compare + Theme */}
+        {/* Right Actions: Compare + Dedicated Upload Page + Theme Toggle */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsCompareOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border cursor-pointer transition-colors ${
+              isDarkMode
+                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+            }`}
           >
-            <ArrowLeftRight className="w-3.5 h-3.5 text-sky-400" />
+            <ArrowLeftRight className="w-3.5 h-3.5 text-sky-500" />
             <span className="hidden sm:inline">Compare</span>
           </button>
 
@@ -1061,28 +1366,40 @@ export function App() {
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-teal-500 hover:bg-teal-400 text-slate-950 shadow-md shadow-teal-500/20 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Upload Data Page</span>
+            <span>Upload Data</span>
           </button>
 
           <button
             onClick={() => setIsDarkMode((d) => !d)}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
+            className={`p-2 rounded-xl border cursor-pointer transition-colors ${
+              isDarkMode
+                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+            }`}
             title="Toggle Dark / Light Basemap"
           >
-            {isDarkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
+            {isDarkMode ? (
+              <Sun className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-slate-700" />
+            )}
           </button>
         </div>
       </header>
 
-      {/* ─── FOCUS DISTRICT HUB BAR (Defaults to Current Location District) ── */}
+      {/* ─── FOCUS DISTRICT HUB BAR + REGION SEARCH ────────────────────────── */}
       <div
-        className={`h-10 shrink-0 border-b px-4 flex items-center justify-between gap-2 overflow-x-auto z-10 ${
-          isDarkMode ? 'bg-slate-900/75 border-slate-800' : 'bg-slate-100 border-slate-200'
+        className={`h-11 shrink-0 border-b px-4 flex items-center justify-between gap-3 overflow-x-auto z-10 ${
+          isDarkMode ? 'bg-slate-900/75 border-slate-800' : 'bg-slate-100/90 border-slate-200'
         }`}
       >
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mr-1">
-            <LocateFixed className="w-3.5 h-3.5 text-teal-400" />
+          <span
+            className={`text-[11px] font-semibold flex items-center gap-1 mr-1 ${
+              isDarkMode ? 'text-slate-400' : 'text-slate-600'
+            }`}
+          >
+            <LocateFixed className="w-3.5 h-3.5 text-teal-500" />
             Focus District:
           </span>
           {FOCUS_NCR_HUBS.map((hub) => {
@@ -1096,8 +1413,10 @@ export function App() {
                 onClick={() => handleSelectFocusHub(hub.key)}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   focusHub === hub.key
-                    ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    ? 'bg-teal-500/20 text-teal-500 border border-teal-500/40'
+                    : isDarkMode
+                      ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                 }`}
               >
                 {label}
@@ -1106,344 +1425,418 @@ export function App() {
           })}
         </div>
 
-        <div className="text-[11px] text-slate-400 hidden lg:block">
-          Showing <strong>{searchedRegions.length}</strong> verified {boundaryLevel} polygons
+        {/* Region / MP / MLA Filter Input */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="relative w-52">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={`Filter ${boundaryLevel} or MP/MLA…`}
+              className={`w-full pl-8 pr-6 py-1 rounded-lg text-[11px] border ${
+                isDarkMode
+                  ? 'bg-slate-950 border-slate-800 text-slate-100 placeholder:text-slate-500'
+                  : 'bg-white border-slate-300 text-slate-900 placeholder:text-slate-400'
+              }`}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <span
+            className={`text-[11px] hidden xl:inline ${
+              isDarkMode ? 'text-slate-400' : 'text-slate-600'
+            }`}
+          >
+            <strong>{searchedRegions.length}</strong> areas
+          </span>
         </div>
       </div>
 
-      {/* ─── MAIN WORKSPACE: LEFT LAYER PANEL + MAP + RIGHT INSIGHTS DRAWER ── */}
+      {/* ─── MAIN WORKSPACE: LEFT LAYER CATALOG + MAP + RIGHT INSIGHTS ─────── */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* ─── LEFT PANEL: SELECTED LAYERS & FILTERS ──────────────────────── */}
+        {/* ─── REDESIGNED LEFT PANEL: SEARCHABLE, SORTED LAYER CATALOG ─────── */}
         <aside
-          className={`w-80 shrink-0 border-r flex flex-col overflow-y-auto z-10 ${
+          className={`w-84 shrink-0 border-r flex flex-col overflow-hidden z-10 ${
             isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
           }`}
         >
-          <div className="p-4 space-y-5">
-            {/* Search Box */}
-            <div>
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`Search ${boundaryLevel} or MP/MLA…`}
-                  className={`w-full pl-8 pr-3 py-2 rounded-xl text-xs border ${
-                    isDarkMode
-                      ? 'bg-slate-950 border-slate-800 text-slate-100'
-                      : 'bg-slate-50 border-slate-300 text-slate-900'
-                  }`}
-                />
+          {/* Left Panel Sticky Header: Title + Search + Category Filter Pills */}
+          <div
+            className={`p-3.5 border-b space-y-3 shrink-0 ${
+              isDarkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-slate-50/70'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-teal-500" />
+                <span className="text-xs font-bold tracking-tight">
+                  Data Layer Catalog
+                </span>
               </div>
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                  isDarkMode
+                    ? 'bg-teal-500/15 text-teal-300 border border-teal-500/30'
+                    : 'bg-teal-50 text-teal-700 border border-teal-200'
+                }`}
+              >
+                {checkedCount} Active on Hover/Click
+              </span>
             </div>
 
-            {/* Active Layers Section (Controls Map, Hover Tooltip & Click Drawer) */}
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-teal-400 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5" />
-                  Selected Data Layers
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  Shown on Hover &amp; Click
-                </span>
-              </div>
+            {/* Search through available data layers */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={layerSearchQuery}
+                onChange={(e) => setLayerSearchQuery(e.target.value)}
+                placeholder="Search layers (e.g. Green Cover, AQI, Literacy)…"
+                className={`w-full pl-8 pr-7 py-2 rounded-xl text-xs border transition-colors ${
+                  isDarkMode
+                    ? 'bg-slate-950 border-slate-800 text-slate-100 focus:border-teal-500/60'
+                    : 'bg-white border-slate-300 text-slate-900 focus:border-teal-600'
+                } outline-none`}
+              />
+              {layerSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setLayerSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
-              {/* Default Visible Layer 1: Green & Forest Cover (ISFR 2023) */}
-              {(['green_cover_pct', 'aqi_pm25'] as MetricKey[]).map((key) => {
-                const cfg = METRIC_CONFIGS[key];
-                const isSelected = selectedMetrics.includes(key);
-                const isChoroplethActive =
-                  !activeCustomChoropleth && activeMetric === key;
+            {/* Filter by Category / Type Pills */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+              <Filter className="w-3 h-3 text-slate-400 shrink-0 mr-0.5" />
+              {(
+                [
+                  { id: 'all', label: 'All Layers' },
+                  { id: 'environment', label: 'Environment' },
+                  { id: 'demographics', label: 'Census' },
+                  { id: 'uploaded', label: `Uploaded (${customLayers.length})` },
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setLayerCategoryFilter(cat.id)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                    layerCategoryFilter === cat.id
+                      ? 'bg-teal-500 text-slate-950 shadow-2xs'
+                      : isDarkMode
+                        ? 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                        : 'bg-slate-200/70 text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Scrollable Layer List (Checked on Top -> Unchecked Alphabetical) */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+            {unifiedCatalogItems.length === 0 ? (
+              <div
+                className={`p-5 rounded-xl border text-center text-xs space-y-2 ${
+                  isDarkMode
+                    ? 'bg-slate-950/50 border-slate-800 text-slate-400'
+                    : 'bg-slate-50 border-slate-200 text-slate-500'
+                }`}
+              >
+                <p>No layers match your search or category filter.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLayerSearchQuery('');
+                    setLayerCategoryFilter('all');
+                  }}
+                  className="text-teal-500 font-semibold hover:underline cursor-pointer"
+                >
+                  Reset layer filters
+                </button>
+              </div>
+            ) : (
+              unifiedCatalogItems.map((item, idx) => {
+                const prevItem = idx > 0 ? unifiedCatalogItems[idx - 1] : null;
+                const showSectionHeader =
+                  idx === 0 || (prevItem && prevItem.checked !== item.checked);
+
+                const isColoringMap =
+                  item.kind === 'custom'
+                    ? activeCustomChoropleth?.id === item.id
+                    : !activeCustomChoropleth &&
+                      effectiveChoroplethMetric === item.metricKey;
 
                 return (
-                  <div
-                    key={key}
-                    className={`p-3 rounded-xl border transition-all ${
-                      isSelected
-                        ? isDarkMode
-                          ? 'bg-slate-950/90 border-teal-500/40'
-                          : 'bg-teal-50/50 border-teal-500/40'
-                        : isDarkMode
-                          ? 'bg-slate-950/40 border-slate-800 opacity-75'
-                          : 'bg-slate-50 border-slate-200 opacity-75'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleMetricSelection(key)}
-                        className="flex items-start gap-2 text-left cursor-pointer"
-                      >
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                        )}
-                        <div>
-                          <div className="text-xs font-bold leading-snug">
-                            {cfg.label}
+                  <div key={item.id} className="space-y-2">
+                    {showSectionHeader && (
+                      <div className="flex items-center justify-between pt-1 px-1">
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider ${
+                            item.checked
+                              ? 'text-teal-500'
+                              : isDarkMode
+                                ? 'text-slate-500'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {item.checked
+                            ? '✓ Selected Layers (Pinned on Top)'
+                            : 'Available Layers (A – Z)'}
+                        </span>
+                      </div>
+                    )}
+
+                    <div
+                      className={`rounded-xl border transition-all ${
+                        item.checked
+                          ? isDarkMode
+                            ? 'bg-slate-950 border-teal-500/50 shadow-md shadow-teal-950/20'
+                            : 'bg-teal-50/40 border-teal-500/50 shadow-xs'
+                          : isDarkMode
+                            ? 'bg-slate-950/40 border-slate-800/80 hover:border-slate-700'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {/* Top Row: Checkbox + Title + Category Badge */}
+                      <div className="p-3 flex items-start gap-2.5">
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={item.checked}
+                          onClick={() => handleToggleLayerCheck(item)}
+                          className={`mt-0.5 w-4 h-4 rounded-md flex items-center justify-center border transition-all cursor-pointer shrink-0 ${
+                            item.checked
+                              ? 'bg-teal-500 border-teal-500 text-slate-950'
+                              : isDarkMode
+                                ? 'bg-slate-900 border-slate-600 hover:border-teal-400'
+                                : 'bg-white border-slate-300 hover:border-teal-600'
+                          }`}
+                        >
+                          {item.checked && <Check className="w-3 h-3 stroke-[3]" />}
+                        </button>
+
+                        <div
+                          onClick={() => handleToggleLayerCheck(item)}
+                          className="flex-1 min-w-0 cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span
+                              className={`text-xs font-bold leading-snug truncate ${
+                                item.checked
+                                  ? isDarkMode
+                                    ? 'text-white'
+                                    : 'text-slate-900'
+                                  : isDarkMode
+                                    ? 'text-slate-300'
+                                    : 'text-slate-700'
+                              }`}
+                            >
+                              {item.title}
+                            </span>
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {cfg.sourceLabel}
+
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
+                                item.category === 'environment'
+                                  ? 'bg-emerald-500/15 text-emerald-400'
+                                  : item.category === 'uploaded'
+                                    ? 'bg-sky-500/15 text-sky-400'
+                                    : 'bg-purple-500/15 text-purple-400'
+                              }`}
+                            >
+                              {item.categoryLabel}
+                            </span>
+                            <span
+                              className={`text-[10px] ${
+                                isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                              }`}
+                            >
+                              • {item.geometryLabel}
+                            </span>
                           </div>
                         </div>
-                      </button>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveCustomChoroplethId(null);
-                          setActiveMetric(key);
-                          if (!selectedMetrics.includes(key)) {
-                            setSelectedMetrics((p) => [...p, key]);
-                          }
-                        }}
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer shrink-0 ${
-                          isChoroplethActive
-                            ? 'bg-teal-500 text-slate-950'
-                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                        }`}
-                      >
-                        {isChoroplethActive ? 'Coloring Map' : 'Color Map'}
-                      </button>
-                    </div>
+                      {/* Expanded Controls When Checked: Opacity Slider + Map Fill Switch + Source */}
+                      {item.checked && (
+                        <div
+                          className={`px-3 pb-3 pt-2 border-t space-y-2.5 text-[11px] ${
+                            isDarkMode ? 'border-slate-800/80' : 'border-slate-200/80'
+                          }`}
+                        >
+                          {/* Opacity Slider */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`text-[10px] font-medium flex items-center gap-1 ${
+                                  isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                                }`}
+                              >
+                                <Sliders className="w-3 h-3 text-teal-500" />
+                                Layer Opacity
+                              </span>
+                              <span className="font-mono text-[10px] font-bold text-teal-500">
+                                {Math.round(item.opacity * 100)}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.1}
+                              max={1}
+                              step={0.05}
+                              value={item.opacity}
+                              onChange={(e) =>
+                                handleLayerOpacityChange(item, Number(e.target.value))
+                              }
+                              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-teal-500"
+                            />
+                          </div>
 
-                    <div className="mt-2 pt-2 border-t border-slate-800/70 flex items-center justify-between text-[10px]">
-                      <a
-                        href={cfg.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-teal-400 hover:underline inline-flex items-center gap-1"
-                      >
-                        Official Source <ExternalLink className="w-2.5 h-2.5" />
-                      </a>
-                      <span className="text-emerald-400 font-semibold">
-                        Default Active
-                      </span>
+                          {/* CPCB Air Quality Mode Switcher inside the Air Pollution Card */}
+                          {item.metricKey === 'aqi_pm25' && (
+                            <div className="space-y-1.5 pt-0.5">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span
+                                  className={
+                                    isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                                  }
+                                >
+                                  Overlay Mode ({aqiStations.length} CPCB Stations):
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={handleSyncLiveCpcb}
+                                  disabled={syncingLiveAqi}
+                                  className="text-sky-500 hover:underline font-semibold cursor-pointer"
+                                >
+                                  {syncingLiveAqi ? 'Syncing…' : 'Sync Live API'}
+                                </button>
+                              </div>
+                              <div
+                                className={`grid grid-cols-3 gap-1 p-1 rounded-lg ${
+                                  isDarkMode ? 'bg-slate-900' : 'bg-slate-200/70'
+                                }`}
+                              >
+                                {(
+                                  [
+                                    { id: 'stations', label: 'Stations' },
+                                    { id: 'blended', label: 'IDW Field' },
+                                    { id: 'both', label: 'Both' },
+                                  ] as const
+                                ).map((m) => (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => setAqiDisplayMode(m.id)}
+                                    className={`py-1 rounded text-[10px] font-semibold cursor-pointer transition-colors ${
+                                      aqiDisplayMode === m.id
+                                        ? 'bg-amber-500 text-slate-950'
+                                        : isDarkMode
+                                          ? 'text-slate-400 hover:text-white'
+                                          : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    {m.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Bottom Row: Color Map Button + Direct Source Link */}
+                          <div className="flex items-center justify-between pt-0.5">
+                            {item.sourceUrl ? (
+                              <a
+                                href={item.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] font-semibold text-teal-500 hover:underline inline-flex items-center gap-1 truncate max-w-[165px]"
+                                title={item.publisher}
+                              >
+                                <span>{item.publisher}</span>
+                                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">
+                                {item.publisher}
+                              </span>
+                            )}
+
+                            {(item.kind === 'builtin' ||
+                              item.customLayer?.type === 'choropleth') && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (item.kind === 'custom' && item.customLayer) {
+                                    setActiveCustomChoroplethId(item.customLayer.id);
+                                    if (item.customLayer.boundaryLevel) {
+                                      setBoundaryLevel(item.customLayer.boundaryLevel);
+                                    }
+                                  } else if (item.metricKey) {
+                                    setActiveCustomChoroplethId(null);
+                                    setActiveMetric(item.metricKey);
+                                  }
+                                }}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                                  isColoringMap
+                                    ? 'bg-teal-500 text-slate-950'
+                                    : isDarkMode
+                                      ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                }`}
+                              >
+                                {isColoringMap ? 'Active Map Fill' : 'Set Map Fill'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
-              })}
+              })
+            )}
 
-              {/* CPCB Station & IDW Continuous Blending Controls */}
-              <div
-                className={`p-3 rounded-xl border space-y-2.5 ${
-                  showAqiLayer
-                    ? 'bg-slate-950/90 border-amber-500/40'
-                    : 'bg-slate-950/40 border-slate-800 opacity-75'
+            {/* Upload Call-to-Action Footer Card */}
+            <div
+              className={`p-3.5 rounded-xl border text-xs space-y-2 mt-3 ${
+                isDarkMode
+                  ? 'bg-slate-950/70 border-slate-800 text-slate-300'
+                  : 'bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+            >
+              <div className="font-bold flex items-center gap-1.5 text-teal-500">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Add State / Assembly / Ward Dataset</span>
+              </div>
+              <p
+                className={`text-[11px] leading-relaxed ${
+                  isDarkMode ? 'text-slate-400' : 'text-slate-500'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={() => setShowAqiLayer((v) => !v)}
-                    className="flex items-center gap-2 text-xs font-bold cursor-pointer"
-                  >
-                    <Wind className="w-4 h-4 text-amber-400" />
-                    <span>CPCB Pollution Stations ({aqiStations.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAqiLayer((v) => !v)}
-                    className="text-xs text-slate-400 hover:text-white cursor-pointer"
-                  >
-                    {showAqiLayer ? (
-                      <Eye className="w-4 h-4 text-amber-400" />
-                    ) : (
-                      <EyeOff className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-
-                {showAqiLayer && (
-                  <>
-                    <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-lg">
-                      {(
-                        [
-                          { id: 'stations', label: 'Stations' },
-                          { id: 'blended', label: 'IDW Field' },
-                          { id: 'both', label: 'Both' },
-                        ] as const
-                      ).map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => setAqiDisplayMode(m.id)}
-                          className={`py-1 rounded text-[10px] font-semibold cursor-pointer ${
-                            aqiDisplayMode === m.id
-                              ? 'bg-amber-500 text-slate-950'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center justify-between text-[10px] pt-1">
-                      <a
-                        href={CPCB_SOURCE_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-amber-400 hover:underline inline-flex items-center gap-1"
-                      >
-                        CPCB CAAQMS Portal <ExternalLink className="w-2.5 h-2.5" />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={handleSyncLiveCpcb}
-                        disabled={syncingLiveAqi}
-                        className="text-sky-400 hover:underline cursor-pointer"
-                      >
-                        {syncingLiveAqi ? 'Syncing…' : 'Sync data.gov.in'}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Uploaded Civic Datasets (Automatically Selected When Uploaded from /upload) */}
-              <div className="pt-2 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    Uploaded Civic Layers ({customLayers.length})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => navigateTo('upload')}
-                    className="text-[11px] text-teal-400 hover:underline font-semibold cursor-pointer"
-                  >
-                    + Upload New
-                  </button>
-                </div>
-
-                {customLayers.length === 0 ? (
-                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-2">
-                    <p>
-                      Have State, Assembly Constituency, District, or Ward data? Upload it on the dedicated Upload Page to map and explore it here.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('upload')}
-                      className="w-full py-1.5 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/30 text-teal-300 font-semibold text-xs cursor-pointer"
-                    >
-                      Open Upload Data Page &rarr;
-                    </button>
-                  </div>
-                ) : (
-                  customLayers.map((layer) => (
-                    <div
-                      key={layer.id}
-                      className={`p-3 rounded-xl border space-y-2 ${
-                        layer.visible
-                          ? 'bg-slate-950 border-teal-500/50'
-                          : 'bg-slate-950/40 border-slate-800 opacity-75'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCustomLayers((prev) =>
-                              prev.map((l) =>
-                                l.id === layer.id ? { ...l, visible: !l.visible } : l
-                              )
-                            );
-                            if (!layer.visible && layer.type === 'choropleth') {
-                              setActiveCustomChoroplethId(layer.id);
-                              if (layer.boundaryLevel) {
-                                setBoundaryLevel(layer.boundaryLevel);
-                              }
-                            }
-                          }}
-                          className="flex items-start gap-2 text-left cursor-pointer"
-                        >
-                          {layer.visible ? (
-                            <CheckSquare className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                          )}
-                          <div>
-                            <div className="text-xs font-bold text-white">
-                              {layer.name}
-                            </div>
-                            <div className="text-[10px] text-slate-400">
-                              {layer.boundaryLevel?.toUpperCase()} • {layer.metricLabel} ({layer.unit})
-                            </div>
-                          </div>
-                        </button>
-                      </div>
-
-                      {layer.description && (
-                        <p className="text-[10px] text-slate-400 line-clamp-2">
-                          {layer.description}
-                        </p>
-                      )}
-
-                      <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800">
-                        <span className="text-slate-400 truncate max-w-[140px]">
-                          By {layer.publisher}
-                        </span>
-                        {layer.sourceUrl && (
-                          <a
-                            href={layer.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-teal-400 hover:underline inline-flex items-center gap-1"
-                          >
-                            Source Link <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Optional Census 2011 Layers (OFF by default) */}
-              <div className="pt-2 space-y-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Additional Official Census PCA Layers (Optional)
-                </span>
-                {(
-                  ['population_density', 'literacy_rate', 'sex_ratio'] as MetricKey[]
-                ).map((key) => {
-                  const cfg = METRIC_CONFIGS[key];
-                  const isSelected = selectedMetrics.includes(key);
-                  return (
-                    <div
-                      key={key}
-                      className="px-3 py-2 rounded-xl bg-slate-950/50 border border-slate-800/80 flex items-center justify-between text-xs"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleMetricSelection(key)}
-                        className="flex items-center gap-2 text-left cursor-pointer"
-                      >
-                        {isSelected ? (
-                          <CheckSquare className="w-3.5 h-3.5 text-teal-400" />
-                        ) : (
-                          <Square className="w-3.5 h-3.5 text-slate-600" />
-                        )}
-                        <span className={isSelected ? 'text-slate-200 font-medium' : 'text-slate-400'}>
-                          {cfg.shortLabel} ({cfg.unit})
-                        </span>
-                      </button>
-                      <a
-                        href={cfg.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] text-slate-500 hover:text-teal-400"
-                        title={cfg.sourceLabel}
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  );
-                })}
-              </div>
+                Upload CSV, JSON, or Open API tables on the Upload Page. Explain your dataset once and it will appear right here as a selected layer.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigateTo('upload')}
+                className="w-full py-2 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs cursor-pointer transition-colors"
+              >
+                Go to Upload Data Page &rarr;
+              </button>
             </div>
           </div>
         </aside>
@@ -1454,10 +1847,16 @@ export function App() {
 
           {/* Ward Rural / Industrial Gap Notice Banner */}
           {boundaryLevel === 'ward' && (
-            <div className="absolute top-3 left-3 right-3 md:right-auto md:max-w-md z-10 p-2.5 rounded-xl bg-slate-900/90 border border-slate-700 backdrop-blur-md text-[11px] text-slate-300 flex items-start gap-2">
-              <Info className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+            <div
+              className={`absolute top-3 left-3 right-3 md:right-auto md:max-w-md z-10 p-2.5 rounded-xl border backdrop-blur-md text-[11px] flex items-start gap-2 shadow-lg ${
+                isDarkMode
+                  ? 'bg-slate-900/90 border-slate-700 text-slate-300'
+                  : 'bg-white/95 border-slate-300 text-slate-700'
+              }`}
+            >
+              <Info className="w-4 h-4 text-teal-500 shrink-0 mt-0.5" />
               <span>
-                Showing <strong>612 digitized Urban Local Body (ULB) wards</strong> across MCD, NDMC, Delhi Cantt, MCF, MCG, GMC &amp; Sonipat MC. Unfilled areas between urban municipalities represent rural Gram Panchayats or Industrial Authorities (GNIDA/YEIDA).
+                Showing <strong>612 digitized Urban Local Body (ULB) wards</strong> across MCD, NDMC, Delhi Cantt, MCF, MCG, GMC &amp; Sonipat MC with parent district outlines. Unfilled gaps between cities represent rural Gram Panchayats or Industrial Authorities.
               </span>
             </div>
           )}
@@ -1465,30 +1864,46 @@ export function App() {
           {/* ─── DYNAMIC HOVER TOOLTIP (Shows ALL Selected Layers from Left Panel) ── */}
           {hoveredFeature && (
             <div
-              className="pointer-events-none absolute z-30 w-76 p-3.5 rounded-2xl bg-slate-950/95 border border-teal-500/40 shadow-2xl text-xs space-y-2 backdrop-blur-md"
+              className={`pointer-events-none absolute z-30 w-76 p-3.5 rounded-2xl border shadow-2xl text-xs space-y-2 backdrop-blur-md ${
+                isDarkMode
+                  ? 'bg-slate-950/95 border-teal-500/40 text-slate-100'
+                  : 'bg-white/95 border-teal-600/40 text-slate-900'
+              }`}
               style={{
                 left: Math.min(hoveredFeature.x + 16, window.innerWidth - 680),
                 top: Math.max(12, hoveredFeature.y - 20),
               }}
             >
-              <div className="border-b border-slate-800 pb-1.5">
+              <div
+                className={`border-b pb-1.5 ${
+                  isDarkMode ? 'border-slate-800' : 'border-slate-200'
+                }`}
+              >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-teal-400">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-teal-500">
                     {hoveredFeature.region.level} • {hoveredFeature.region.state}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400">
+                  <span
+                    className={`text-[10px] font-mono ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
                     {hoveredFeature.region.area_sq_km} km²
                   </span>
                 </div>
-                <div className="font-bold text-sm text-white mt-0.5">
+                <div className="font-bold text-sm mt-0.5">
                   {hoveredFeature.region.name}
                 </div>
               </div>
 
-              {/* All Selected Metric Layers from Left Panel */}
+              {/* All Checked Layers from Left Panel */}
               <div className="space-y-1.5">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Selected Layers Data:
+                <div
+                  className={`text-[10px] font-semibold uppercase tracking-wider ${
+                    isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                  }`}
+                >
+                  Selected Layers ({checkedCount}):
                 </div>
 
                 {selectedMetrics.map((mKey) => {
@@ -1503,8 +1918,10 @@ export function App() {
                       key={mKey}
                       className="flex items-center justify-between text-xs py-0.5"
                     >
-                      <span className="text-slate-300">{mCfg.shortLabel}:</span>
-                      <span className="font-mono font-bold text-teal-300">
+                      <span className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
+                        {mCfg.shortLabel}:
+                      </span>
+                      <span className="font-mono font-bold text-teal-500">
                         {val ?? '—'} {mCfg.unit}
                       </span>
                     </div>
@@ -1512,15 +1929,22 @@ export function App() {
                 })}
 
                 {showAqiLayer && hoveredFeature.region.pm25_ugm3 && (
-                  <div className="flex items-center justify-between text-[11px] text-amber-300 pt-0.5 border-t border-slate-800/70">
-                    <span>CPCB PM2.5 ({hoveredFeature.region.cpcb_station_name?.split(',')[0]}):</span>
+                  <div
+                    className={`flex items-center justify-between text-[11px] pt-0.5 border-t ${
+                      isDarkMode
+                        ? 'text-amber-300 border-slate-800/70'
+                        : 'text-amber-700 border-slate-200'
+                    }`}
+                  >
+                    <span>
+                      CPCB PM2.5 ({hoveredFeature.region.cpcb_station_name?.split(',')[0]}):
+                    </span>
                     <span className="font-mono font-bold">
                       {hoveredFeature.region.pm25_ugm3} µg/m³
                     </span>
                   </div>
                 )}
 
-                {/* Any Selected Uploaded Layers from Left Panel */}
                 {customLayers
                   .filter((l) => l.visible && l.type === 'choropleth')
                   .map((layer) => {
@@ -1531,12 +1955,14 @@ export function App() {
                     return (
                       <div
                         key={layer.id}
-                        className="flex items-center justify-between text-xs py-0.5 border-t border-slate-800/70"
+                        className={`flex items-center justify-between text-xs py-0.5 border-t ${
+                          isDarkMode ? 'border-slate-800/70' : 'border-slate-200'
+                        }`}
                       >
-                        <span className="text-sky-300 truncate max-w-[150px]">
+                        <span className="text-sky-500 truncate max-w-[150px] font-medium">
                           {layer.metricLabel || layer.name}:
                         </span>
-                        <span className="font-mono font-bold text-sky-400">
+                        <span className="font-mono font-bold text-sky-500">
                           {val !== undefined ? `${val} ${layer.unit || ''}` : 'N/A'}
                         </span>
                       </div>
@@ -1544,9 +1970,19 @@ export function App() {
                   })}
               </div>
 
-              <div className="pt-1 border-t border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
-                <span>Rep: {hoveredFeature.region.rep_name || 'Verified'}</span>
-                <span className="text-teal-400 font-semibold">Click for Source Links &rarr;</span>
+              <div
+                className={`pt-1 border-t text-[10px] flex items-center justify-between ${
+                  isDarkMode
+                    ? 'border-slate-800 text-slate-400'
+                    : 'border-slate-200 text-slate-500'
+                }`}
+              >
+                <span className="truncate max-w-[160px]">
+                  Rep: {hoveredFeature.region.rep_name || 'Verified'}
+                </span>
+                <span className="text-teal-500 font-semibold">
+                  Click for Source Links &rarr;
+                </span>
               </div>
             </div>
           )}
@@ -1554,32 +1990,48 @@ export function App() {
           {/* Hover Tooltip for CPCB Air Quality Station Marker */}
           {hoveredStation && (
             <div
-              className="pointer-events-none absolute z-30 w-68 p-3 rounded-2xl bg-slate-950/95 border border-amber-500/50 shadow-2xl text-xs space-y-1.5"
+              className={`pointer-events-none absolute z-30 w-68 p-3 rounded-2xl border shadow-2xl text-xs space-y-1.5 ${
+                isDarkMode
+                  ? 'bg-slate-950/95 border-amber-500/50 text-slate-100'
+                  : 'bg-white/95 border-amber-500 text-slate-900'
+              }`}
               style={{
                 left: Math.min(hoveredStation.x + 14, window.innerWidth - 650),
                 top: Math.max(12, hoveredStation.y - 20),
               }}
             >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-500">
                 CPCB CAAQMS Monitoring Station
               </div>
-              <div className="font-bold text-white">{hoveredStation.station.station}</div>
+              <div className="font-bold">{hoveredStation.station.station}</div>
               <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                <div className="p-1.5 rounded bg-slate-900">
+                <div
+                  className={`p-1.5 rounded ${
+                    isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
+                  }`}
+                >
                   <div className="text-[9px] text-slate-400">AQI</div>
-                  <div className="font-mono font-bold text-amber-400">
+                  <div className="font-mono font-bold text-amber-500">
                     {hoveredStation.station.aqi}
                   </div>
                 </div>
-                <div className="p-1.5 rounded bg-slate-900">
+                <div
+                  className={`p-1.5 rounded ${
+                    isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
+                  }`}
+                >
                   <div className="text-[9px] text-slate-400">PM2.5</div>
-                  <div className="font-mono font-bold text-rose-400">
+                  <div className="font-mono font-bold text-rose-500">
                     {hoveredStation.station.pm25}
                   </div>
                 </div>
-                <div className="p-1.5 rounded bg-slate-900">
+                <div
+                  className={`p-1.5 rounded ${
+                    isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
+                  }`}
+                >
                   <div className="text-[9px] text-slate-400">PM10</div>
-                  <div className="font-mono font-bold text-sky-400">
+                  <div className="font-mono font-bold text-sky-500">
                     {hoveredStation.station.pm10}
                   </div>
                 </div>
@@ -1591,9 +2043,15 @@ export function App() {
           )}
 
           {/* Legend Card */}
-          <div className="absolute bottom-4 left-4 z-10 p-3 rounded-2xl bg-slate-900/95 border border-slate-800 shadow-xl text-xs space-y-2 min-w-[230px]">
+          <div
+            className={`absolute bottom-4 left-4 z-10 p-3 rounded-2xl border shadow-xl text-xs space-y-2 min-w-[235px] backdrop-blur-md ${
+              isDarkMode
+                ? 'bg-slate-900/95 border-slate-800 text-slate-100'
+                : 'bg-white/95 border-slate-200 text-slate-900'
+            }`}
+          >
             <div className="flex items-center justify-between gap-3">
-              <span className="font-bold text-slate-200">
+              <span className="font-bold">
                 {activeCustomChoropleth
                   ? `${activeCustomChoropleth.name} (${activeCustomChoropleth.unit})`
                   : activeMetricCfg.label}
@@ -1606,21 +2064,38 @@ export function App() {
                     className="h-2.5 w-full rounded-sm mb-1"
                     style={{ backgroundColor: col }}
                   />
-                  <span className="text-[9px] font-mono text-slate-400">{val}</span>
+                  <span
+                    className={`text-[9px] font-mono ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
+                    {val}
+                  </span>
                 </div>
               ))}
             </div>
-            <div className="pt-1 border-t border-slate-800 flex items-center justify-between text-[10px]">
+            <div
+              className={`pt-1 border-t flex items-center justify-between text-[10px] ${
+                isDarkMode ? 'border-slate-800' : 'border-slate-200'
+              }`}
+            >
               <a
                 href={
                   activeCustomChoropleth?.sourceUrl || activeMetricCfg.sourceUrl
                 }
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-teal-400 hover:underline inline-flex items-center gap-1"
+                className="text-teal-500 hover:underline inline-flex items-center gap-1 font-semibold"
               >
                 Verify Legend Source <ExternalLink className="w-2.5 h-2.5" />
               </a>
+              <span
+                className={`font-mono ${
+                  isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                }`}
+              >
+                Opacity: {Math.round(activeChoroplethOpacity * 100)}%
+              </span>
             </div>
           </div>
         </main>
@@ -1635,57 +2110,96 @@ export function App() {
             <div className="p-5 space-y-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-amber-400">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-amber-500">
                     Verified CPCB Air Quality Station
                   </span>
                   <h2 className="text-base font-bold mt-0.5">
                     {selectedStation.station}
                   </h2>
-                  <p className="text-xs text-slate-400">
-                    {selectedStation.city}, {selectedStation.state} • ({selectedStation.lat.toFixed(4)}, {selectedStation.lon.toFixed(4)})
+                  <p
+                    className={`text-xs ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
+                    {selectedStation.city}, {selectedStation.state} • (
+                    {selectedStation.lat.toFixed(4)}, {selectedStation.lon.toFixed(4)})
                   </p>
                 </div>
                 <button
                   onClick={() => setSelectedStation(null)}
-                  className="text-xs text-teal-400 hover:underline cursor-pointer"
+                  className="text-xs text-teal-500 hover:underline cursor-pointer font-semibold"
                 >
                   Back to Region
                 </button>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <div
+                  className={`p-3 rounded-xl border ${
+                    isDarkMode
+                      ? 'bg-slate-950 border-slate-800'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
                   <div className="text-[10px] text-slate-400">National AQI</div>
-                  <div className="text-xl font-mono font-bold text-amber-400 mt-0.5">
+                  <div className="text-xl font-mono font-bold text-amber-500 mt-0.5">
                     {selectedStation.aqi}
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <div
+                  className={`p-3 rounded-xl border ${
+                    isDarkMode
+                      ? 'bg-slate-950 border-slate-800'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
                   <div className="text-[10px] text-slate-400">PM2.5 Concentration</div>
-                  <div className="text-xl font-mono font-bold text-rose-400 mt-0.5">
+                  <div className="text-xl font-mono font-bold text-rose-500 mt-0.5">
                     {selectedStation.pm25} <span className="text-xs">µg/m³</span>
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <div
+                  className={`p-3 rounded-xl border ${
+                    isDarkMode
+                      ? 'bg-slate-950 border-slate-800'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
                   <div className="text-[10px] text-slate-400">PM10 Concentration</div>
-                  <div className="text-lg font-mono font-bold text-sky-400 mt-0.5">
+                  <div className="text-lg font-mono font-bold text-sky-500 mt-0.5">
                     {selectedStation.pm10} <span className="text-xs">µg/m³</span>
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <div
+                  className={`p-3 rounded-xl border ${
+                    isDarkMode
+                      ? 'bg-slate-950 border-slate-800'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
                   <div className="text-[10px] text-slate-400">NO2 Concentration</div>
-                  <div className="text-lg font-mono font-bold text-emerald-400 mt-0.5">
+                  <div className="text-lg font-mono font-bold text-emerald-500 mt-0.5">
                     {selectedStation.no2 ?? '—'} <span className="text-xs">µg/m³</span>
                   </div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
-                <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <div
+                className={`p-4 rounded-xl border space-y-2 text-xs ${
+                  isDarkMode
+                    ? 'bg-slate-950 border-slate-800'
+                    : 'bg-slate-50 border-slate-200'
+                }`}
+              >
+                <div className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   Official Data Source Verification Links
                 </div>
-                <p className="text-[11px] text-slate-400">
+                <p
+                  className={`text-[11px] ${
+                    isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                  }`}
+                >
                   Measurements sourced from Continuous Ambient Air Quality Monitoring Stations (CAAQMS) operated by CPCB, DPCC, HSPCB, and UPPCB.
                 </p>
                 <div className="flex flex-col gap-1.5 pt-1">
@@ -1693,7 +2207,11 @@ export function App() {
                     href={selectedStation.sourceUrl || CPCB_SOURCE_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-between px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-semibold"
+                    className={`inline-flex items-center justify-between px-3 py-2 rounded-lg font-semibold ${
+                      isDarkMode
+                        ? 'bg-slate-900 hover:bg-slate-800 text-amber-400'
+                        : 'bg-white hover:bg-slate-100 text-amber-600 border border-slate-200'
+                    }`}
                   >
                     <span>Open CPCB CAAQMS Live Portal</span>
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -1702,7 +2220,11 @@ export function App() {
                     href={CPCB_DATAGOV_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-between px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-teal-400 font-semibold"
+                    className={`inline-flex items-center justify-between px-3 py-2 rounded-lg font-semibold ${
+                      isDarkMode
+                        ? 'bg-slate-900 hover:bg-slate-800 text-teal-400'
+                        : 'bg-white hover:bg-slate-100 text-teal-600 border border-slate-200'
+                    }`}
                   >
                     <span>Open data.gov.in CPCB API Dataset</span>
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -1713,18 +2235,30 @@ export function App() {
           ) : selectedRegion ? (
             <div className="p-5 space-y-5">
               {/* Region Header */}
-              <div className="border-b border-slate-800 pb-3">
+              <div
+                className={`border-b pb-3 ${
+                  isDarkMode ? 'border-slate-800' : 'border-slate-200'
+                }`}
+              >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-teal-400">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-teal-500">
                     {selectedRegion.level} • {selectedRegion.state}
                   </span>
-                  <span className="text-[11px] font-mono text-slate-400">
+                  <span
+                    className={`text-[11px] font-mono ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
                     GIS Area: {selectedRegion.area_sq_km} km²
                   </span>
                 </div>
                 <h2 className="text-lg font-bold mt-0.5">{selectedRegion.name}</h2>
                 {selectedRegion.pc_name && (
-                  <p className="text-xs text-slate-400">
+                  <p
+                    className={`text-xs ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
                     Lok Sabha PC: {selectedRegion.pc_name} • District:{' '}
                     {selectedRegion.district_name || selectedRegion.parent_region}
                   </p>
@@ -1733,26 +2267,40 @@ export function App() {
 
               {/* ─── ACTIVE SELECTED LAYERS WITH DIRECT SOURCE LINKS ──────── */}
               <div className="space-y-3">
-                <div className="text-xs font-bold uppercase tracking-wider text-teal-400 flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-teal-500 flex items-center justify-between">
                   <span>Selected Layers &amp; Source Links</span>
-                  <span className="text-[10px] text-slate-400 font-normal">
+                  <span
+                    className={`text-[10px] font-normal ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
                     Click any link to verify
                   </span>
                 </div>
 
-                {/* 1. Green Cover Card (when selected in Left Panel) */}
+                {/* 1. Green Cover Card */}
                 {selectedMetrics.includes('green_cover_pct') && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-2">
+                  <div
+                    className={`p-3.5 rounded-xl border space-y-2 ${
+                      isDarkMode
+                        ? 'bg-slate-950 border-emerald-500/30'
+                        : 'bg-emerald-50/40 border-emerald-500/30'
+                    }`}
+                  >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-400">
+                      <span className="text-xs font-bold text-emerald-500">
                         Green &amp; Forest Cover (ISFR 2023)
                       </span>
-                      <span className="text-base font-mono font-bold text-white">
+                      <span className="text-base font-mono font-bold">
                         {selectedRegion.green_cover_pct}%
                       </span>
                     </div>
                     {selectedRegion.isfr_benchmark_region && (
-                      <div className="text-[11px] text-slate-400">
+                      <div
+                        className={`text-[11px] ${
+                          isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                        }`}
+                      >
                         Benchmark Zone: {selectedRegion.isfr_benchmark_region}
                       </div>
                     )}
@@ -1762,7 +2310,7 @@ export function App() {
                       }
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-teal-400 hover:underline pt-0.5"
+                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-teal-500 hover:underline pt-0.5"
                     >
                       <span>
                         Source:{' '}
@@ -1774,39 +2322,61 @@ export function App() {
                   </div>
                 )}
 
-                {/* 2. Pollution Data Card (when selected in Left Panel) */}
+                {/* 2. Pollution Data Card */}
                 {(selectedMetrics.includes('aqi_pm25') || showAqiLayer) && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2">
+                  <div
+                    className={`p-3.5 rounded-xl border space-y-2 ${
+                      isDarkMode
+                        ? 'bg-slate-950 border-amber-500/30'
+                        : 'bg-amber-50/40 border-amber-500/30'
+                    }`}
+                  >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-amber-400">
+                      <span className="text-xs font-bold text-amber-500">
                         CPCB Air Pollution (CAAQMS)
                       </span>
-                      <span className="text-base font-mono font-bold text-amber-300">
+                      <span className="text-base font-mono font-bold text-amber-500">
                         {selectedRegion.aqi_pm25} AQI
                       </span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-center text-[11px] pt-1">
-                      <div className="p-1.5 rounded bg-slate-900">
+                      <div
+                        className={`p-1.5 rounded ${
+                          isDarkMode ? 'bg-slate-900' : 'bg-white border border-slate-200'
+                        }`}
+                      >
                         <div className="text-[9px] text-slate-400">PM2.5</div>
-                        <div className="font-mono font-bold text-rose-400">
+                        <div className="font-mono font-bold text-rose-500">
                           {selectedRegion.pm25_ugm3 ?? '—'} µg/m³
                         </div>
                       </div>
-                      <div className="p-1.5 rounded bg-slate-900">
+                      <div
+                        className={`p-1.5 rounded ${
+                          isDarkMode ? 'bg-slate-900' : 'bg-white border border-slate-200'
+                        }`}
+                      >
                         <div className="text-[9px] text-slate-400">PM10</div>
-                        <div className="font-mono font-bold text-sky-400">
+                        <div className="font-mono font-bold text-sky-500">
                           {selectedRegion.pm10_ugm3 ?? '—'} µg/m³
                         </div>
                       </div>
-                      <div className="p-1.5 rounded bg-slate-900">
+                      <div
+                        className={`p-1.5 rounded ${
+                          isDarkMode ? 'bg-slate-900' : 'bg-white border border-slate-200'
+                        }`}
+                      >
                         <div className="text-[9px] text-slate-400">NO2</div>
-                        <div className="font-mono font-bold text-emerald-400">
+                        <div className="font-mono font-bold text-emerald-500">
                           {selectedRegion.no2_ugm3 ?? '—'} µg/m³
                         </div>
                       </div>
                     </div>
                     {selectedRegion.cpcb_station_name && (
-                      <div className="text-[11px] text-slate-400">
+                      <div
+                        className={`text-[11px] ${
+                          isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                        }`}
+                      >
                         Monitoring Station: {selectedRegion.cpcb_station_name}
                       </div>
                     )}
@@ -1815,7 +2385,7 @@ export function App() {
                         href={selectedRegion.pollution_source_url || CPCB_SOURCE_URL}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400 hover:underline"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-500 hover:underline"
                       >
                         <span>Source: CPCB CAAQMS Bulletin</span>
                         <ExternalLink className="w-3 h-3" />
@@ -1824,7 +2394,7 @@ export function App() {
                         href={CPCB_DATAGOV_URL}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-400 hover:underline"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-500 hover:underline"
                       >
                         <span>data.gov.in API</span>
                         <ExternalLink className="w-3 h-3" />
@@ -1833,7 +2403,7 @@ export function App() {
                   </div>
                 )}
 
-                {/* 3. Any Selected Uploaded Datasets from Left Panel */}
+                {/* 3. Any Selected Uploaded Datasets */}
                 {customLayers
                   .filter((l) => l.visible && l.type === 'choropleth')
                   .map((layer) => {
@@ -1844,25 +2414,37 @@ export function App() {
                     return (
                       <div
                         key={layer.id}
-                        className="p-3.5 rounded-xl bg-slate-950 border border-sky-500/40 space-y-1.5"
+                        className={`p-3.5 rounded-xl border space-y-1.5 ${
+                          isDarkMode
+                            ? 'bg-slate-950 border-sky-500/40'
+                            : 'bg-sky-50/40 border-sky-500/40'
+                        }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-sky-400">
+                          <span className="text-xs font-bold text-sky-500">
                             {layer.name}
                           </span>
-                          <span className="text-sm font-mono font-bold text-white">
+                          <span className="text-sm font-mono font-bold">
                             {val !== undefined
                               ? `${val} ${layer.unit || ''}`
                               : `Not mapped on ${selectedRegion.level}`}
                           </span>
                         </div>
                         {layer.description && (
-                          <p className="text-[11px] text-slate-400">
+                          <p
+                            className={`text-[11px] ${
+                              isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                            }`}
+                          >
                             {layer.description}
                           </p>
                         )}
                         <div className="flex items-center justify-between text-[11px] pt-1">
-                          <span className="text-slate-400">
+                          <span
+                            className={
+                              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                            }
+                          >
                             Publisher: {layer.publisher}
                           </span>
                           {layer.sourceUrl && (
@@ -1870,7 +2452,7 @@ export function App() {
                               href={layer.sourceUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 font-semibold text-teal-400 hover:underline"
+                              className="inline-flex items-center gap-1 font-semibold text-teal-500 hover:underline"
                             >
                               Verify Dataset Source <ExternalLink className="w-3 h-3" />
                             </a>
@@ -1880,7 +2462,7 @@ export function App() {
                     );
                   })}
 
-                {/* 4. Optional Census PCA Cards (only if user toggled them ON in Left Panel) */}
+                {/* 4. Optional Census PCA Cards (when checked) */}
                 {(['population_density', 'literacy_rate', 'sex_ratio'] as MetricKey[])
                   .filter((k) => selectedMetrics.includes(k))
                   .map((k) => {
@@ -1892,13 +2474,15 @@ export function App() {
                     return (
                       <div
                         key={k}
-                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1"
+                        className={`p-3 rounded-xl border space-y-1 ${
+                          isDarkMode
+                            ? 'bg-slate-950 border-slate-800'
+                            : 'bg-slate-50 border-slate-200'
+                        }`}
                       >
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-300">
-                            {cfg.label}
-                          </span>
-                          <span className="font-mono font-bold text-teal-300">
+                          <span className="font-semibold">{cfg.label}</span>
+                          <span className="font-mono font-bold text-teal-500">
                             {val} {cfg.unit}
                           </span>
                         </div>
@@ -1906,7 +2490,7 @@ export function App() {
                           href={cfg.sourceUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-teal-400 hover:underline"
+                          className="inline-flex items-center gap-1 text-[11px] text-teal-500 hover:underline"
                         >
                           <span>Source: {cfg.sourceLabel}</span>
                           <ExternalLink className="w-3 h-3" />
@@ -1917,43 +2501,68 @@ export function App() {
               </div>
 
               {/* ─── VERIFIED ELECTED REPRESENTATIVE & BOUNDARY PROVENANCE ─ */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
+              <div
+                className={`p-4 rounded-xl border space-y-2.5 text-xs ${
+                  isDarkMode
+                    ? 'bg-slate-950 border-slate-800'
+                    : 'bg-slate-50 border-slate-200'
+                }`}
+              >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 flex items-center gap-1">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span
+                    className={`text-[10px] uppercase tracking-wider font-bold flex items-center gap-1 ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
                     {selectedRegion.rep_role || 'Elected Representative'}
                   </span>
                   {selectedRegion.rep_party && (
-                    <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-amber-300">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        isDarkMode
+                          ? 'bg-slate-800 text-amber-300'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
                       {selectedRegion.rep_party}
                     </span>
                   )}
                 </div>
 
-                <div className="text-sm font-bold text-white">
+                <div className="text-sm font-bold">
                   {selectedRegion.rep_name || 'Verified Official Jurisdiction'}
                 </div>
 
                 {selectedRegion.rep_votes && (
-                  <div className="text-[11px] text-slate-400">
+                  <div
+                    className={`text-[11px] ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                    }`}
+                  >
                     Winning Votes (ECI Official Tally):{' '}
-                    <strong className="text-slate-200 font-mono">
+                    <strong className="font-mono">
                       {selectedRegion.rep_votes.toLocaleString('en-IN')}
                     </strong>{' '}
                     ({selectedRegion.rep_term})
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-slate-800/80 flex flex-col gap-1.5 text-[11px]">
+                <div
+                  className={`pt-2 border-t flex flex-col gap-1.5 text-[11px] ${
+                    isDarkMode ? 'border-slate-800/80' : 'border-slate-200'
+                  }`}
+                >
                   {selectedRegion.rep_source_url && (
                     <a
                       href={selectedRegion.rep_source_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center justify-between text-emerald-400 hover:underline"
+                      className="inline-flex items-center justify-between text-emerald-500 hover:underline font-medium"
                     >
                       <span>
-                        {selectedRegion.rep_source_label || 'Official Representative Record'}
+                        {selectedRegion.rep_source_label ||
+                          'Official Representative Record'}
                       </span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
@@ -1963,7 +2572,7 @@ export function App() {
                       href={selectedRegion.rep_affidavit_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center justify-between text-sky-400 hover:underline"
+                      className="inline-flex items-center justify-between text-sky-500 hover:underline font-medium"
                     >
                       <span>MyNeta / SEC Candidate Affidavit</span>
                       <ExternalLink className="w-3 h-3" />
@@ -1974,7 +2583,9 @@ export function App() {
                       href={selectedRegion.boundary_source_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center justify-between text-slate-400 hover:text-teal-400 hover:underline"
+                      className={`inline-flex items-center justify-between hover:text-teal-500 hover:underline ${
+                        isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                      }`}
                     >
                       <span>
                         GIS Polygon:{' '}
@@ -1988,10 +2599,16 @@ export function App() {
               </div>
 
               {/* ─── REGIONAL BENCHMARK CHART ─────────────────────────────── */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+              <div
+                className={`p-4 rounded-xl border space-y-3 ${
+                  isDarkMode
+                    ? 'bg-slate-950 border-slate-800'
+                    : 'bg-slate-50 border-slate-200'
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold flex items-center gap-1.5">
-                    <BarChart3 className="w-4 h-4 text-teal-400" />
+                    <BarChart3 className="w-4 h-4 text-teal-500" />
                     Tier Benchmark ({selectedRegion.level.toUpperCase()})
                   </span>
                   <div className="flex gap-1">
@@ -2002,7 +2619,9 @@ export function App() {
                         className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase cursor-pointer ${
                           chartMode === m
                             ? 'bg-teal-500 text-slate-950'
-                            : 'bg-slate-900 text-slate-400'
+                            : isDarkMode
+                              ? 'bg-slate-900 text-slate-400'
+                              : 'bg-slate-200 text-slate-600'
                         }`}
                       >
                         {m}
