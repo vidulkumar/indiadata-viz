@@ -12,6 +12,10 @@ create table if not exists public.regions (
   literacy_rate numeric(5,2) not null,
   aqi_pm25 integer,
   hospitals_count integer not null default 0,
+  sex_ratio integer not null default 875,
+  green_cover_pct numeric(5,2) not null default 18.5,
+  schools_count integer not null default 120,
+  avg_circle_rate integer not null default 8500,
   geojson jsonb,
   created_at timestamptz not null default now()
 );
@@ -22,6 +26,9 @@ create table if not exists public.insights (
   title text not null,
   summary text not null,
   author text not null default 'Civic Researcher',
+  metric text not null default 'literacy_rate',
+  views_count integer not null default 120,
+  downloads_count integer not null default 14,
   created_at timestamptz not null default now()
 );
 
@@ -33,6 +40,7 @@ alter table public.insights enable row level security;
 grant usage on schema public to anon, authenticated;
 grant select on public.regions to anon, authenticated;
 grant select, insert on public.insights to anon, authenticated;
+grant update (views_count, downloads_count) on public.insights to anon, authenticated;
 grant usage, select on sequence public.insights_id_seq to anon, authenticated;
 
 create policy "Public can read regions"

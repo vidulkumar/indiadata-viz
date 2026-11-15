@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/supabase.ts"],"version":"5.7.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/worker.ts","./src/components/comparemodal.tsx","./src/components/creatorstudiomodal.tsx","./src/components/dataimportermodal.tsx","./src/data/ncrdefaults.ts","./src/lib/supabase.ts"],"version":"5.7.3"}

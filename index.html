@@ -3,9 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IndiaData.viz — Infrastructure & Live Postgres Pipeline</title>
+    <title>IndiaData.viz — Open Civic Data Studio &amp; GIS Map Explorer (Delhi-NCR)</title>
+    <link
+      href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <style>
+      .maplibregl-popup-content {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        border-radius: 10px !important;
+        padding: 10px 14px !important;
+        border: 1px solid #334155 !important;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6) !important;
+      }
+      .maplibregl-popup-tip {
+        border-top-color: #0f172a !important;
+      }
+    </style>
   </head>
-  <body class="bg-slate-950 text-slate-100 antialiased">
+  <body class="bg-slate-950 text-slate-100 antialiased overflow-hidden">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
