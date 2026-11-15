@@ -26,14 +26,11 @@ jobs:
         run: npm install
 
       - name: Build application
-        env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://vdcxpatuospplgpcsonn.supabase.co' }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_rWQBriNhmU31mwH0lN9ZPg_hbYIx8t3' }}
         run: npm run build
 
-      - name: Deploy to Cloudflare Workers / Pages
+      - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy --var SUPABASE_URL:${{ secrets.SUPABASE_URL }} --var SUPABASE_KEY:${{ secrets.SUPABASE_KEY }}

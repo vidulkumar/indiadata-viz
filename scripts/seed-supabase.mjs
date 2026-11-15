@@ -2,11 +2,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl =
-  process.env.VITE_SUPABASE_URL || 'https://vdcxpatuospplgpcsonn.supabase.co';
+// Load .env.local if present for local CLI execution
+const envLocalPath = path.resolve('.env.local');
+if (fs.existsSync(envLocalPath)) {
+  const lines = fs.readFileSync(envLocalPath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (m && !process.env[m[1]]) {
+      process.env[m[1]] = m[2].trim();
+    }
+  }
+}
+
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseKey =
-  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  'sb_publishable_rWQBriNhmU31mwH0lN9ZPg_hbYIx8t3';
+  process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error(
+    'Missing SUPABASE_URL or SUPABASE_KEY. Set them in .env.local (gitignored) or environment variables.'
+  );
+  process.exit(1);
+}
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -73,16 +90,4 @@ for (let i = 0; i < allRows.length; i += BATCH) {
   console.log(`Synced ${Math.min(i + BATCH, allRows.length)} / ${allRows.length}`);
 }
 
-// Archive any previously seeded synthetic demo community layers so zero mock data is visible
-const { error: archiveErr } = await supabase
-  .from('community_layers')
-  .update({ category: 'archived' })
-  .in('slug', [
-    'ncr-assembly-crime-index-2024-2025',
-    'ncr-district-winter-pm25-progression',
-  ]);
-if (archiveErr) {
-  console.warn('Note archiving old community layers:', archiveErr.message);
-}
-
-console.log('SUPABASE SEEDING COMPLETE (ZERO MOCK DATA)!');
+console.log('SUPABASE SEEDING COMPLETE!');

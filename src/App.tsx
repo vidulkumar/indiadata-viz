@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { supabase } from './lib/supabase';
 import {
   BoundaryLevel,
   MetricKey,
@@ -15,7 +14,6 @@ import {
 import {
   FOCUS_NCR_HUBS,
   VERIFIED_CPCB_STATIONS,
-  CPCB_SOURCE_LABEL,
   CPCB_SOURCE_URL,
   CPCB_DATAGOV_URL,
 } from './data/ncrDefaults';
@@ -210,90 +208,22 @@ export function App() {
   const customPointMarkersRef = useRef<any[]>([]);
   const allRegionsRef = useRef<Region[]>([]);
 
-  // ─── 1. Load Verified GIS Boundaries ───────────────────────────────────────
+  // ─── 1. Load Verified GIS Boundaries via Server API (/api/boundaries) ──────
   const fetchTierBoundaries = useCallback(
     async (tier: BoundaryLevel): Promise<Region[]> => {
-      if (isLocalhost) {
-        try {
-          const localRes = await fetch(`/api/local/boundaries?level=${tier}`);
-          if (localRes.ok) {
-            const fc = await localRes.json();
-            if (Array.isArray(fc.features) && fc.features.length > 0) {
-              return fc.features.map((f: any) => ({
-                ...f.properties,
-                geojson: f.geometry,
-              }));
-            }
-          }
-        } catch {
-          // fallback below
-        }
-      }
-
-      if (supabase) {
-        try {
-          const { data, error } = await supabase
-            .from('boundary_features')
-            .select('*')
-            .eq('level', tier)
-            .order('code', { ascending: true });
-
-          if (!error && data && data.length > 0) {
-            return data.map((row: any) => ({
-              ...(row.properties || {}),
-              code: row.code,
-              name: row.name,
-              state: row.state,
-              parent_region: row.parent_region,
-              level: row.level,
-              area_sq_km: Number(row.area_sq_km || row.properties?.area_sq_km || 0),
-              green_cover_pct: Number(
-                row.green_cover_pct || row.properties?.green_cover_pct || 0
-              ),
-              aqi_pm25: Number(row.aqi_pm25 || row.properties?.aqi_pm25 || 0),
-              pm25_ugm3: Number(row.properties?.pm25_ugm3 || 0),
-              pm10_ugm3: Number(row.properties?.pm10_ugm3 || 0),
-              no2_ugm3: Number(row.properties?.no2_ugm3 || 0),
-              cpcb_station_name: row.properties?.cpcb_station_name || null,
-              isfr_benchmark_region: row.properties?.isfr_benchmark_region || null,
-              population_density: Number(
-                row.population_density || row.properties?.population_density || 0
-              ),
-              density: Number(
-                row.population_density || row.properties?.population_density || 0
-              ),
-              literacy_rate: Number(
-                row.literacy_rate || row.properties?.literacy_rate || 0
-              ),
-              sex_ratio: Number(row.sex_ratio || row.properties?.sex_ratio || 0),
-              rep_name: row.rep_name,
-              rep_role: row.rep_role,
-              rep_party: row.rep_party,
-              rep_term: row.rep_term,
-              rep_votes: row.rep_votes,
-              rep_source_label: row.rep_source_label,
-              rep_source_url: row.rep_source_url,
-              rep_affidavit_url: row.rep_affidavit_url,
-              green_source_label:
-                row.properties?.green_source_label ||
-                'Forest Survey of India — ISFR 2023',
-              green_source_url:
-                row.properties?.green_source_url || 'https://fsi.nic.in/isfr-2023',
-              pollution_source_label:
-                row.properties?.pollution_source_label || CPCB_SOURCE_LABEL,
-              pollution_source_url:
-                row.properties?.pollution_source_url || CPCB_SOURCE_URL,
-              boundary_source_label: row.boundary_source_label,
-              boundary_source_url: row.boundary_source_url,
-              data_source_label: row.data_source_label,
-              data_source_url: row.data_source_url,
-              center: row.center,
-              geojson: row.geojson,
+      try {
+        const apiRes = await fetch(`/api/boundaries?level=${tier}`);
+        if (apiRes.ok) {
+          const fc = await apiRes.json();
+          if (Array.isArray(fc.features) && fc.features.length > 0) {
+            return fc.features.map((f: any) => ({
+              ...f.properties,
+              geojson: f.geometry,
             }));
           }
-        } catch {
-          // fallback to static GeoJSON
         }
+      } catch {
+        // fallback to static GeoJSON below
       }
 
       const fileMap: Record<BoundaryLevel, string> = {

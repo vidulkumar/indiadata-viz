@@ -1,9 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl =
-  import.meta.env.VITE_SUPABASE_URL || 'https://vdcxpatuospplgpcsonn.supabase.co';
-const supabasePublishableKey =
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  'sb_publishable_rWQBriNhmU31mwH0lN9ZPg_hbYIx8t3';
-
-export const supabase = createClient(supabaseUrl, supabasePublishableKey);
+// Database access is proxied server-side via /api/boundaries and /api/community-layers
+// so no database URL or credentials are exposed in the browser bundle.
+export const supabase = null;

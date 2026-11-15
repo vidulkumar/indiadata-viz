@@ -98,6 +98,28 @@ check(
   appSrc.includes("window.location.pathname === '/upload'") && appSrc.includes('<UploadDataPage')
 );
 
+// 5. Verify Zero Hardcoded Database URLs or Keys in Code / Workflow
+const filesToAudit = [
+  '.github/workflows/deploy.yml',
+  'src/worker.ts',
+  'src/lib/supabase.ts',
+  'src/App.tsx',
+  'scripts/seed-supabase.mjs',
+];
+let leakedSecrets = 0;
+for (const rel of filesToAudit) {
+  const txt = fs.readFileSync(path.resolve(rel), 'utf8');
+  if (txt.includes('supabase.co') || txt.includes('sb_publishable_')) {
+    leakedSecrets++;
+    console.error(`   Found hardcoded DB URL/key in: ${rel}`);
+  }
+}
+check(
+  'Zero hardcoded database URLs or keys in GitHub workflow or source code',
+  leakedSecrets === 0,
+  `checked ${filesToAudit.length} files`
+);
+
 if (failed) {
   console.error('\n❌ Verification failed.');
   process.exit(1);

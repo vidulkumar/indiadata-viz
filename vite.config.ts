@@ -50,7 +50,11 @@ function localSqliteApiPlugin(): Plugin {
           });
         }
 
-        if (url.pathname === '/api/local/boundaries' && req.method === 'GET') {
+        if (
+          (url.pathname === '/api/local/boundaries' ||
+            url.pathname === '/api/boundaries') &&
+          req.method === 'GET'
+        ) {
           const level = url.searchParams.get('level') || 'district';
           const rows = db
             .prepare('SELECT properties_json, geojson_json FROM boundary_features WHERE level = ? ORDER BY code ASC')
