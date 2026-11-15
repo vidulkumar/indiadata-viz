@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify Zero-Mock Data & Local DB Integrity
+        run: node scripts/verify-local.mjs
+
       - name: Build application
         run: npm run build
 

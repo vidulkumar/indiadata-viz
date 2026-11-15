@@ -1,5 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Region, METRIC_CONFIGS, MetricKey, BoundaryLevel } from '../types';
+import {
+  Region,
+  METRIC_CONFIGS,
+  ALL_METRIC_KEYS,
+  MetricKey,
+  BoundaryLevel,
+  CustomLayer,
+} from '../types';
 import { X, ArrowLeftRight, ShieldCheck, ExternalLink } from 'lucide-react';
 
 interface Props {
@@ -7,23 +14,25 @@ interface Props {
   onClose: () => void;
   regions: Region[];
   initialRegionA?: Region | null;
+  customLayers?: CustomLayer[];
 }
 
-const COMPARE_METRICS: MetricKey[] = [
-  'green_cover_pct',
-  'aqi_pm25',
-  'population_density',
-  'literacy_rate',
-  'sex_ratio',
-];
+type CompareCategoryGroup =
+  | 'all'
+  | 'env_water'
+  | 'health_edu'
+  | 'safety_infra'
+  | 'demographics';
 
 export default function CompareModal({
   isOpen,
   onClose,
   regions,
   initialRegionA,
+  customLayers = [],
 }: Props) {
   const [tierFilter, setTierFilter] = useState<BoundaryLevel | 'all'>('all');
+  const [catGroup, setCatGroup] = useState<CompareCategoryGroup>('all');
   const [codeA, setCodeA] = useState<string>('dl-nct');
   const [codeB, setCodeB] = useState<string>('hr-ggn');
 
@@ -55,6 +64,21 @@ export default function CompareModal({
     setCodeB(regionA.code);
   }
 
+  const visibleMetrics: MetricKey[] = ALL_METRIC_KEYS.filter((key) => {
+    const cat = METRIC_CONFIGS[key].category;
+    if (catGroup === 'all') return true;
+    if (catGroup === 'env_water') return cat === 'environment' || cat === 'water';
+    if (catGroup === 'health_edu') return cat === 'health' || cat === 'education';
+    if (catGroup === 'safety_infra')
+      return cat === 'safety' || cat === 'infrastructure';
+    if (catGroup === 'demographics') return cat === 'demographics';
+    return true;
+  });
+
+  const comparableCustomLayers = customLayers.filter(
+    (l) => l.type === 'choropleth' && l.choroplethByDate
+  );
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
@@ -62,10 +86,10 @@ export default function CompareModal({
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <ArrowLeftRight className="w-5 h-5 text-sky-400" />
-              Side-by-Side Verified Civic Comparison
+              Side-by-Side Verified Multi-Layer Civic Comparison
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Compare ISFR 2023 Green Cover, CPCB Air Quality, Census PCA, and Elected Representatives across Districts, PCs, ACs, or Wards
+              Compare ISFR 2023, CPCB AQI, CGWB Groundwater, NFHS-5 Health, UDISE+ Education, NCRB Safety &amp; Census across NCR
             </p>
           </div>
           <button
@@ -139,7 +163,7 @@ export default function CompareModal({
                     onChange={(e) => side.setCode(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-medium"
                   >
-                    {filteredPool.slice(0, 300).map((r) => (
+                    {filteredPool.slice(0, 350).map((r) => (
                       <option key={r.code} value={r.code}>
                         [{r.level.toUpperCase()}] {r.name} ({r.state})
                       </option>
@@ -192,10 +216,35 @@ export default function CompareModal({
             ))}
           </div>
 
-          {/* Metrics Comparison Bars with % Delta & Source Link */}
+          {/* Sector Filter Tabs */}
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 pb-2.5">
+            {(
+              [
+                { id: 'all', label: `All Verified Metrics (${ALL_METRIC_KEYS.length})` },
+                { id: 'env_water', label: 'Environment & Water (CGWB/CPCB)' },
+                { id: 'health_edu', label: 'Health & Education (NFHS-5/UDISE+)' },
+                { id: 'safety_infra', label: 'Public Safety & Fuel (NCRB/NFHS)' },
+                { id: 'demographics', label: 'Demographics (Census PCA)' },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setCatGroup(tab.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+                  catGroup === tab.id
+                    ? 'bg-teal-500 text-slate-950'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Metrics Comparison Bars with % Delta, Polarity Badge & Source Link */}
           {regionA && regionB && (
             <div className="space-y-2.5">
-              {COMPARE_METRICS.map((key) => {
+              {visibleMetrics.map((key) => {
                 const cfg = METRIC_CONFIGS[key];
                 const valA = Number(
                   key === 'population_density'
@@ -220,24 +269,89 @@ export default function CompareModal({
                   >
                     <div className="flex items-center justify-between text-xs tabular-nums">
                       <span className="font-semibold text-emerald-400 font-mono">
-                        {valA.toLocaleString('en-IN')} {cfg.unit}
+                        {valA.toLocaleString('en-IN', { maximumFractionDigits: 1 })}{' '}
+                        {cfg.unit}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-center gap-2">
                         <a
                           href={cfg.sourceUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="font-medium text-slate-300 hover:text-teal-400 inline-flex items-center gap-1"
+                          className="font-medium text-slate-200 hover:text-teal-400 inline-flex items-center gap-1"
+                          title={cfg.sourceLabel}
                         >
                           {cfg.label}
                           <ExternalLink className="w-3 h-3 text-slate-500" />
                         </a>
+                        {cfg.dataGovUrl && (
+                          <a
+                            href={cfg.dataGovUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-sky-400 hover:underline inline-flex items-center gap-0.5"
+                          >
+                            Catalog <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-400">
                           {Number(deltaPct) > 0 ? `+${deltaPct}%` : `${deltaPct}%`} Δ
                         </span>
                       </div>
                       <span className="font-semibold text-sky-400 font-mono">
-                        {valB.toLocaleString('en-IN')} {cfg.unit}
+                        {valB.toLocaleString('en-IN', { maximumFractionDigits: 1 })}{' '}
+                        {cfg.unit}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-center">
+                      <div className="h-2 bg-slate-900 rounded-full overflow-hidden flex justify-end">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full"
+                          style={{ width: `${pctA}%` }}
+                        />
+                      </div>
+                      <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-sky-500 rounded-full"
+                          style={{ width: `${pctB}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Any Custom Uploaded Choropleth Layers */}
+              {comparableCustomLayers.map((layer) => {
+                const dKey = layer.activeDate || layer.availableDates?.[0] || 'Latest';
+                const valA = Number(layer.choroplethByDate?.[dKey]?.[regionA.code] ?? 0);
+                const valB = Number(layer.choroplethByDate?.[dKey]?.[regionB.code] ?? 0);
+                const maxVal = Math.max(valA, valB, 1);
+                const pctA = Math.round((valA / maxVal) * 100);
+                const pctB = Math.round((valB / maxVal) * 100);
+                return (
+                  <div
+                    key={layer.id}
+                    className="p-3 rounded-xl bg-slate-950 border border-sky-500/30 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between text-xs tabular-nums">
+                      <span className="font-semibold text-emerald-400 font-mono">
+                        {valA.toLocaleString('en-IN')} {layer.unit}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sky-400">{layer.name}</span>
+                        {layer.sourceUrl && (
+                          <a
+                            href={layer.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-slate-400 hover:text-white"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      <span className="font-semibold text-sky-400 font-mono">
+                        {valB.toLocaleString('en-IN')} {layer.unit}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 items-center">

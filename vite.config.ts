@@ -3,7 +3,12 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 // @ts-ignore
-import { getLocalDb, getLocalDbPath } from './scripts/local-db.mjs';
+import {
+  getLocalDb,
+  getLocalDbPath,
+  getBoundariesFromLocalDb,
+  getSpatialLayersFromLocalDb,
+} from './scripts/local-db.mjs';
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -56,18 +61,22 @@ function localSqliteApiPlugin(): Plugin {
           req.method === 'GET'
         ) {
           const level = url.searchParams.get('level') || 'district';
-          const rows = db
-            .prepare('SELECT properties_json, geojson_json FROM boundary_features WHERE level = ? ORDER BY code ASC')
-            .all(level) as Array<{ properties_json: string; geojson_json: string }>;
-
-          const features = rows.map((r) => ({
-            type: 'Feature',
-            properties: JSON.parse(r.properties_json),
-            geometry: JSON.parse(r.geojson_json),
-          }));
+          const features = getBoundariesFromLocalDb(db, level);
           return sendJson(res, 200, {
             type: 'FeatureCollection',
             features,
+            source: 'local-sqlite',
+          });
+        }
+
+        if (
+          (url.pathname === '/api/local/spatial-layers' ||
+            url.pathname === '/api/spatial-layers') &&
+          req.method === 'GET'
+        ) {
+          const payload = getSpatialLayersFromLocalDb(db);
+          return sendJson(res, 200, {
+            ...payload,
             source: 'local-sqlite',
           });
         }

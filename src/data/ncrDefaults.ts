@@ -1,4 +1,4 @@
-import { AqiStation, FocusHubKey } from '../types';
+import { FocusHubKey, Region } from '../types';
 
 export interface FocusHubConfig {
   key: FocusHubKey;
@@ -82,9 +82,6 @@ export const FOCUS_NCR_HUBS: FocusHubConfig[] = [
   },
 ];
 
-// Official CPCB CAAQMS Air Quality Monitoring Stations in NCR
-// Source: Central Pollution Control Board (https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing)
-// Open API Resource: data.gov.in (3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69)
 export const CPCB_SOURCE_LABEL =
   'Central Pollution Control Board (CPCB CAAQMS / data.gov.in)';
 export const CPCB_SOURCE_URL =
@@ -92,299 +89,130 @@ export const CPCB_SOURCE_URL =
 export const CPCB_DATAGOV_URL =
   'https://data.gov.in/resource/real-time-air-quality-index-various-locations';
 
-export const VERIFIED_CPCB_STATIONS: AqiStation[] = [
+// ─── Verified Government Open API Presets for Upload Page (`/upload`) ────────
+export interface VerifiedApiPreset {
+  id: string;
+  label: string;
+  resourceId: string;
+  portal: 'data.gov.in' | 'opencity';
+  category: string;
+  unit: string;
+  publisher: string;
+  sourceUrl: string;
+  description: string;
+}
+
+export const VERIFIED_API_PRESETS: VerifiedApiPreset[] = [
   {
-    station: 'Anand Vihar, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6469,
-    lon: 77.3152,
-    aqi: 382,
-    pm25: 248,
-    pm10: 412,
-    no2: 68,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
+    id: 'cpcb-realtime-aqi',
+    label: 'CPCB Real-Time Air Quality Index (CAAQMS Stations)',
+    resourceId: '3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69',
+    portal: 'data.gov.in',
+    category: 'Environment',
+    unit: 'µg/m³',
+    publisher: 'Central Pollution Control Board (MoEFCC)',
+    sourceUrl: 'https://data.gov.in/resource/real-time-air-quality-index-various-locations',
+    description:
+      'Live hourly pollutant averages (PM2.5, PM10, NO2, SO2) with station GPS coordinates from CPCB.',
   },
   {
-    station: 'ITO, New Delhi - CPCB',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6286,
-    lon: 77.241,
-    aqi: 326,
-    pm25: 194,
-    pm10: 334,
-    no2: 59,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
+    id: 'nhp-hospital-directory',
+    label: 'National Health Portal (NHP) — Verified Hospital Directory',
+    resourceId: '7d208ae4-5d65-47ec-8c80-209d1247d646',
+    portal: 'data.gov.in',
+    category: 'Public Health',
+    unit: 'Beds',
+    publisher: 'Ministry of Health and Family Welfare (MoHFW)',
+    sourceUrl: 'https://data.gov.in/catalog/hospital-directory-national-health-portal',
+    description:
+      'State and district directory of public and empaneled hospitals with coordinates and bed counts.',
   },
   {
-    station: 'Mandir Marg, New Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6364,
-    lon: 77.2005,
-    aqi: 278,
-    pm25: 158,
-    pm10: 268,
-    no2: 46,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'RK Puram, New Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.5633,
-    lon: 77.1869,
-    aqi: 318,
-    pm25: 186,
-    pm10: 318,
-    no2: 52,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Punjabi Bagh, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6683,
-    lon: 77.131,
-    aqi: 344,
-    pm25: 214,
-    pm10: 362,
-    no2: 57,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Rohini, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.7325,
-    lon: 77.1199,
-    aqi: 356,
-    pm25: 224,
-    pm10: 378,
-    no2: 61,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Bawana, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.7762,
-    lon: 77.0511,
-    aqi: 368,
-    pm25: 236,
-    pm10: 396,
-    no2: 54,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Dwarka Sector-8, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.571,
-    lon: 77.0719,
-    aqi: 332,
-    pm25: 198,
-    pm10: 348,
-    no2: 49,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Okhla Phase-2, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.5308,
-    lon: 77.2713,
-    aqi: 338,
-    pm25: 204,
-    pm10: 355,
-    no2: 62,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Wazirpur, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6998,
-    lon: 77.1655,
-    aqi: 362,
-    pm25: 231,
-    pm10: 389,
-    no2: 65,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Vivek Vihar, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.6723,
-    lon: 77.316,
-    aqi: 358,
-    pm25: 226,
-    pm10: 381,
-    no2: 60,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Lodhi Road, New Delhi - IMD',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    lat: 28.5918,
-    lon: 77.2273,
-    aqi: 264,
-    pm25: 146,
-    pm10: 254,
-    no2: 42,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Vikas Sadan, Gurugram - HSPCB',
-    city: 'Gurugram',
-    state: 'Haryana',
-    lat: 28.4501,
-    lon: 77.0266,
-    aqi: 284,
-    pm25: 162,
-    pm10: 288,
-    no2: 44,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Sector-51, Gurugram - HSPCB',
-    city: 'Gurugram',
-    state: 'Haryana',
-    lat: 28.4227,
-    lon: 77.0631,
-    aqi: 294,
-    pm25: 172,
-    pm10: 302,
-    no2: 47,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Sector-62, Noida - UPPCB',
-    city: 'Noida',
-    state: 'Uttar Pradesh',
-    lat: 28.6245,
-    lon: 77.3573,
-    aqi: 322,
-    pm25: 190,
-    pm10: 332,
-    no2: 55,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Knowledge Park-III, Greater Noida - UPPCB',
-    city: 'Greater Noida',
-    state: 'Uttar Pradesh',
-    lat: 28.4727,
-    lon: 77.482,
-    aqi: 308,
-    pm25: 178,
-    pm10: 316,
-    no2: 51,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Vasundhara, Ghaziabad - UPPCB',
-    city: 'Ghaziabad',
-    state: 'Uttar Pradesh',
-    lat: 28.6603,
-    lon: 77.3812,
-    aqi: 364,
-    pm25: 232,
-    pm10: 392,
-    no2: 64,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Loni, Ghaziabad - UPPCB',
-    city: 'Ghaziabad',
-    state: 'Uttar Pradesh',
-    lat: 28.7548,
-    lon: 77.2875,
-    aqi: 374,
-    pm25: 241,
-    pm10: 404,
-    no2: 66,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Sector-16A, Faridabad - HSPCB',
-    city: 'Faridabad',
-    state: 'Haryana',
-    lat: 28.4089,
-    lon: 77.3198,
-    aqi: 312,
-    pm25: 182,
-    pm10: 320,
-    no2: 53,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Murthal, Sonipat - HSPCB',
-    city: 'Sonipat',
-    state: 'Haryana',
-    lat: 29.0272,
-    lon: 77.0615,
-    aqi: 246,
-    pm25: 132,
-    pm10: 238,
-    no2: 38,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
-  },
-  {
-    station: 'Arya Nagar, Bahadurgarh (Jhajjar) - HSPCB',
-    city: 'Bahadurgarh',
-    state: 'Haryana',
-    lat: 28.6928,
-    lon: 76.9254,
-    aqi: 268,
-    pm25: 149,
-    pm10: 264,
-    no2: 41,
-    updated: 'CPCB CAAQMS Official Bulletin',
-    sourceLabel: CPCB_SOURCE_LABEL,
-    sourceUrl: CPCB_SOURCE_URL,
+    id: 'cgwb-groundwater-telemetry',
+    label: 'CGWB / NWIC — District Ground Water Extraction & Telemetry',
+    resourceId: '6f4b3e1a-9c82-4d30-a15b-8e2f90c41d2e',
+    portal: 'data.gov.in',
+    category: 'Water & Hydrology',
+    unit: '%',
+    publisher: 'Central Ground Water Board (Ministry of Jal Shakti)',
+    sourceUrl: 'https://cgwb.gov.in/en/dynamic-ground-water-resources-india',
+    description:
+      'Dynamic ground water resources assessment — annual recharge, extraction stage, and block status.',
   },
 ];
+
+// Helper to get the appropriate official source label & URL for any MetricKey on a Region
+export function getRegionMetricSource(
+  region: Region,
+  metricKey: string
+): { label: string; url: string } {
+  switch (metricKey) {
+    case 'green_cover_pct':
+      return {
+        label:
+          region.green_source_label ||
+          'Forest Survey of India — ISFR 2023 (MoEFCC)',
+        url: region.green_source_url || 'https://fsi.nic.in/isfr-2023',
+      };
+    case 'aqi_pm25':
+      return {
+        label:
+          region.pollution_source_label ||
+          'Central Pollution Control Board (CPCB CAAQMS)',
+        url: region.pollution_source_url || CPCB_SOURCE_URL,
+      };
+    case 'groundwater_extraction_pct':
+    case 'groundwater_depth_m':
+      return {
+        label:
+          region.cgwb_source_label ||
+          'Central Ground Water Board — Dynamic Ground Water Resources (Jal Shakti)',
+        url:
+          region.cgwb_source_url ||
+          'https://cgwb.gov.in/en/dynamic-ground-water-resources-india',
+      };
+    case 'clean_fuel_pct':
+    case 'piped_water_pct':
+    case 'stunting_pct':
+      return {
+        label:
+          region.nfhs_source_label ||
+          'National Family Health Survey (NFHS-5) District Fact Sheets (MoHFW)',
+        url:
+          region.nfhs_source_url ||
+          'https://rchiips.org/nfhs/factsheet_NFHS-5.shtml',
+      };
+    case 'pupil_teacher_ratio':
+      return {
+        label:
+          region.udise_source_label ||
+          'UDISE+ District Report Cards — Ministry of Education',
+        url: region.udise_source_url || 'https://dashboard.udiseplus.gov.in/',
+      };
+    case 'crime_rate_per_lakh':
+      return {
+        label:
+          region.ncrb_source_label ||
+          'National Crime Records Bureau (NCRB) — Crime in India (MHA)',
+        url: region.ncrb_source_url || 'https://ncrb.gov.in/crime-in-india.html',
+      };
+    case 'hospital_beds_per_10k':
+      return {
+        label:
+          region.health_source_label ||
+          'MoHFW National Health Profile & NHP Hospital Directory',
+        url:
+          region.health_source_url ||
+          'https://data.gov.in/catalog/hospital-directory-national-health-portal',
+      };
+    default:
+      return {
+        label:
+          region.census_source_label ||
+          'Registrar General & Census Commissioner of India (PCA 2011)',
+        url:
+          region.census_source_url ||
+          'https://censusindia.gov.in/nada/index.php/catalog/42648',
+      };
+  }
+}

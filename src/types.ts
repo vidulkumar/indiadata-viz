@@ -1,8 +1,27 @@
 export type BoundaryLevel = 'district' | 'constituency' | 'assembly' | 'ward';
 
+export type LayerCategory =
+  | 'environment'
+  | 'water'
+  | 'health'
+  | 'transport'
+  | 'education'
+  | 'safety'
+  | 'demographics'
+  | 'infrastructure'
+  | 'uploaded';
+
 export type MetricKey =
   | 'green_cover_pct'
   | 'aqi_pm25'
+  | 'groundwater_extraction_pct'
+  | 'groundwater_depth_m'
+  | 'clean_fuel_pct'
+  | 'piped_water_pct'
+  | 'stunting_pct'
+  | 'hospital_beds_per_10k'
+  | 'pupil_teacher_ratio'
+  | 'crime_rate_per_lakh'
   | 'population_density'
   | 'literacy_rate'
   | 'sex_ratio';
@@ -45,6 +64,31 @@ export interface Region {
   pm10_ugm3?: number | null;
   no2_ugm3?: number | null;
   cpcb_station_name?: string | null;
+  // CGWB Groundwater Metrics
+  groundwater_extraction_pct?: number;
+  groundwater_depth_m?: number;
+  cgwb_category?: string;
+  cgwb_source_label?: string | null;
+  cgwb_source_url?: string | null;
+  // NFHS-5 & Jal Jeevan Household / Health Metrics
+  clean_fuel_pct?: number;
+  piped_water_pct?: number;
+  stunting_pct?: number;
+  nfhs_source_label?: string | null;
+  nfhs_source_url?: string | null;
+  // UDISE+ Education Metric
+  pupil_teacher_ratio?: number;
+  udise_source_label?: string | null;
+  udise_source_url?: string | null;
+  // NCRB Public Safety Metric
+  crime_rate_per_lakh?: number;
+  ncrb_source_label?: string | null;
+  ncrb_source_url?: string | null;
+  // MoHFW Healthcare Infrastructure Metric
+  hospital_beds_per_10k?: number;
+  health_source_label?: string | null;
+  health_source_url?: string | null;
+  // Elected Representative & Provenance
   rep_name?: string | null;
   rep_role?: string | null;
   rep_party?: string | null;
@@ -66,6 +110,7 @@ export interface Region {
   center?: [number, number];
   geojson?: Record<string, unknown> | null;
   customMetricValue?: number;
+  [key: string]: unknown;
 }
 
 export interface Insight {
@@ -109,6 +154,64 @@ export interface AqiStation {
   sourceUrl: string;
 }
 
+export interface VerifiedPointFeature {
+  id: string;
+  name: string;
+  city: string;
+  state: string;
+  lat: number;
+  lon: number;
+  primaryMetricLabel: string;
+  primaryMetricValue: number | string;
+  primaryMetricUnit: string;
+  secondaryMetricLabel?: string;
+  secondaryMetricValue?: number | string;
+  secondaryMetricUnit?: string;
+  statusBadge?: string;
+  agency: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  dataGovUrl?: string;
+  color?: string;
+}
+
+export interface VerifiedLineCorridor {
+  id: string;
+  name: string;
+  code: string;
+  color: string;
+  operator: string;
+  routeLengthKm: number;
+  stationsCount: number;
+  dailyRidershipEst?: string;
+  terminalEndpoints: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  dataGovUrl?: string;
+  coordinates: [number, number][];
+}
+
+export interface VerifiedOverlayLayerConfig {
+  id: string;
+  title: string;
+  shortTitle: string;
+  category: LayerCategory;
+  categoryLabel: string;
+  geometryType: 'point' | 'line-network';
+  geometryLabel: string;
+  unit: string;
+  publisher: string;
+  sourceUrl: string;
+  dataGovUrl?: string;
+  description: string;
+  color: string;
+  badgeText?: string;
+  defaultVisible: boolean;
+  defaultOpacity: number;
+  points: VerifiedPointFeature[];
+  lines?: VerifiedLineCorridor[];
+}
+
 export interface CustomLayer {
   id: string;
   slug?: string;
@@ -116,7 +219,7 @@ export interface CustomLayer {
   description?: string;
   methodology?: string;
   targetState?: string;
-  type: 'point' | 'choropleth';
+  type: 'point' | 'choropleth' | 'line';
   boundaryLevel?: BoundaryLevel;
   category?: string;
   unit?: string;
@@ -148,7 +251,7 @@ export interface CommunityCatalogLayer {
   description?: string;
   methodology?: string;
   target_state?: string;
-  layer_type: 'point' | 'choropleth';
+  layer_type: 'point' | 'choropleth' | 'line';
   boundary_level: BoundaryLevel | null;
   category: string;
   metric_label: string;
@@ -168,9 +271,15 @@ export interface MetricConfig {
   key: MetricKey;
   label: string;
   shortLabel: string;
+  category: LayerCategory;
+  categoryLabel: string;
   unit: string;
   sourceLabel: string;
   sourceUrl: string;
+  dataGovUrl?: string;
+  description: string;
+  polarity: 'higher_better' | 'lower_better' | 'neutral';
+  benchmarkMax: number;
   defaultVisible: boolean;
   stops: [number, string][];
 }
@@ -184,14 +293,39 @@ export const VIRIDIS_TEAL_AMBER: [string, string, string, string, string] = [
   '#f39c12',
 ];
 
+// Scientific Stress / Hazard Ramp (Cool Teal -> Amber -> Crimson)
+export const HAZARD_STRESS_RAMP: [string, string, string, string, string] = [
+  '#10b981',
+  '#84cc16',
+  '#eab308',
+  '#f97316',
+  '#ef4444',
+];
+
+// Hydrological Blue-to-Crimson Ramp for Groundwater Stress
+export const HYDRO_STRESS_RAMP: [string, string, string, string, string] = [
+  '#0ea5e9',
+  '#22c55e',
+  '#eab308',
+  '#f97316',
+  '#e11d48',
+];
+
 export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
   green_cover_pct: {
     key: 'green_cover_pct',
     label: 'Green & Forest Cover (ISFR 2023)',
     shortLabel: 'Green Cover',
+    category: 'environment',
+    categoryLabel: 'Environment',
     unit: '%',
     sourceLabel: 'Forest Survey of India — ISFR 2023 (MoEFCC)',
     sourceUrl: 'https://fsi.nic.in/isfr-2023',
+    dataGovUrl: 'https://data.gov.in/catalog/india-state-forest-report',
+    description:
+      'Combined forest and tree cover percentage per official ISFR 2023 district satellite assessment.',
+    polarity: 'higher_better',
+    benchmarkMax: 35,
     defaultVisible: true,
     stops: [
       [4, '#0c3b4e'],
@@ -205,9 +339,16 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
     key: 'aqi_pm25',
     label: 'Air Pollution — CPCB AQI (CAAQMS)',
     shortLabel: 'CPCB Air Quality (AQI)',
+    category: 'environment',
+    categoryLabel: 'Environment',
     unit: 'AQI',
     sourceLabel: 'Central Pollution Control Board (CPCB CAAQMS)',
     sourceUrl: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
+    dataGovUrl: 'https://data.gov.in/resource/real-time-air-quality-index-various-locations',
+    description:
+      'Continuous Ambient Air Quality Monitoring (CAAQMS) station index & IDW spatial field.',
+    polarity: 'lower_better',
+    benchmarkMax: 400,
     defaultVisible: true,
     stops: [
       [150, '#22c55e'],
@@ -217,13 +358,203 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
       [370, '#ef4444'],
     ],
   },
+  groundwater_extraction_pct: {
+    key: 'groundwater_extraction_pct',
+    label: 'Groundwater Extraction Stage (CGWB)',
+    shortLabel: 'Groundwater Extraction',
+    category: 'water',
+    categoryLabel: 'Water & Hydrology',
+    unit: '%',
+    sourceLabel: 'Central Ground Water Board — Dynamic Ground Water Resources (Jal Shakti)',
+    sourceUrl: 'https://cgwb.gov.in/en/dynamic-ground-water-resources-india',
+    dataGovUrl: 'https://nwdp.nwic.gov.in/',
+    description:
+      'Annual groundwater draft as % of extractable recharge (>100% indicates Over-Exploited aquifer).',
+    polarity: 'lower_better',
+    benchmarkMax: 220,
+    defaultVisible: false,
+    stops: [
+      [70, HYDRO_STRESS_RAMP[0]],
+      [90, HYDRO_STRESS_RAMP[1]],
+      [105, HYDRO_STRESS_RAMP[2]],
+      [130, HYDRO_STRESS_RAMP[3]],
+      [180, HYDRO_STRESS_RAMP[4]],
+    ],
+  },
+  groundwater_depth_m: {
+    key: 'groundwater_depth_m',
+    label: 'Groundwater Table Depth (CGWB DWLR)',
+    shortLabel: 'Water Table Depth',
+    category: 'water',
+    categoryLabel: 'Water & Hydrology',
+    unit: 'm bgl',
+    sourceLabel: 'Central Ground Water Board & NWIC Telemetry (Ministry of Jal Shakti)',
+    sourceUrl: 'https://cgwb.gov.in/en/ground-water-year-book',
+    dataGovUrl: 'https://nwdp.nwic.gov.in/',
+    description:
+      'Pre-monsoon depth to water table in meters below ground level (m bgl) from CGWB piezometers.',
+    polarity: 'lower_better',
+    benchmarkMax: 40,
+    defaultVisible: false,
+    stops: [
+      [10, HYDRO_STRESS_RAMP[0]],
+      [15, HYDRO_STRESS_RAMP[1]],
+      [20, HYDRO_STRESS_RAMP[2]],
+      [28, HYDRO_STRESS_RAMP[3]],
+      [34, HYDRO_STRESS_RAMP[4]],
+    ],
+  },
+  piped_water_pct: {
+    key: 'piped_water_pct',
+    label: 'Improved / Piped Drinking Water (NFHS-5)',
+    shortLabel: 'Piped Water Access',
+    category: 'water',
+    categoryLabel: 'Water & Hydrology',
+    unit: '%',
+    sourceLabel: 'NFHS-5 District Fact Sheets & Jal Jeevan Mission (MoHFW / Jal Shakti)',
+    sourceUrl: 'https://rchiips.org/nfhs/factsheet_NFHS-5.shtml',
+    dataGovUrl: 'https://data.gov.in/catalog/key-indicators-national-family-health-survey-nfhs',
+    description:
+      'Percentage of households living in dwellings with improved/piped drinking water source.',
+    polarity: 'higher_better',
+    benchmarkMax: 100,
+    defaultVisible: false,
+    stops: [
+      [92, VIRIDIS_TEAL_AMBER[0]],
+      [96, VIRIDIS_TEAL_AMBER[1]],
+      [98, VIRIDIS_TEAL_AMBER[2]],
+      [99, VIRIDIS_TEAL_AMBER[3]],
+      [99.5, VIRIDIS_TEAL_AMBER[4]],
+    ],
+  },
+  clean_fuel_pct: {
+    key: 'clean_fuel_pct',
+    label: 'Clean Cooking Fuel Adoption (NFHS-5)',
+    shortLabel: 'Clean Cooking Fuel',
+    category: 'infrastructure',
+    categoryLabel: 'Civic Infrastructure',
+    unit: '%',
+    sourceLabel: 'National Family Health Survey (NFHS-5) District Fact Sheets (MoHFW)',
+    sourceUrl: 'https://rchiips.org/nfhs/factsheet_NFHS-5.shtml',
+    dataGovUrl: 'https://data.gov.in/catalog/key-indicators-national-family-health-survey-nfhs',
+    description:
+      'Percentage of households using clean fuel for cooking (LPG, PNG, electricity, biogas).',
+    polarity: 'higher_better',
+    benchmarkMax: 100,
+    defaultVisible: false,
+    stops: [
+      [70, VIRIDIS_TEAL_AMBER[0]],
+      [82, VIRIDIS_TEAL_AMBER[1]],
+      [91, VIRIDIS_TEAL_AMBER[2]],
+      [96, VIRIDIS_TEAL_AMBER[3]],
+      [99, VIRIDIS_TEAL_AMBER[4]],
+    ],
+  },
+  stunting_pct: {
+    key: 'stunting_pct',
+    label: 'Child Nutrition — Under-5 Stunting (NFHS-5)',
+    shortLabel: 'Child Stunting (<5Y)',
+    category: 'health',
+    categoryLabel: 'Public Health',
+    unit: '%',
+    sourceLabel: 'National Family Health Survey (NFHS-5) District Fact Sheets (IIPS / MoHFW)',
+    sourceUrl: 'https://rchiips.org/nfhs/factsheet_NFHS-5.shtml',
+    dataGovUrl: 'https://data.gov.in/catalog/key-indicators-national-family-health-survey-nfhs',
+    description:
+      'Percentage of children under age 5 years who are stunted (height-for-age below -2 SD).',
+    polarity: 'lower_better',
+    benchmarkMax: 45,
+    defaultVisible: false,
+    stops: [
+      [18, HAZARD_STRESS_RAMP[0]],
+      [24, HAZARD_STRESS_RAMP[1]],
+      [28, HAZARD_STRESS_RAMP[2]],
+      [31, HAZARD_STRESS_RAMP[3]],
+      [34, HAZARD_STRESS_RAMP[4]],
+    ],
+  },
+  hospital_beds_per_10k: {
+    key: 'hospital_beds_per_10k',
+    label: 'Public & Empaneled Hospital Beds (MoHFW / NHA)',
+    shortLabel: 'Hospital Beds / 10k',
+    category: 'health',
+    categoryLabel: 'Public Health',
+    unit: '/10k pop',
+    sourceLabel: 'MoHFW National Health Profile & Delhi/State Health Bulletins',
+    sourceUrl: 'https://data.gov.in/catalog/hospital-directory-national-health-portal',
+    dataGovUrl: 'https://data.gov.in/catalog/hospital-directory-national-health-portal',
+    description:
+      'Sanctioned government & AB-PMJAY empaneled hospital beds per 10,000 resident population.',
+    polarity: 'higher_better',
+    benchmarkMax: 65,
+    defaultVisible: false,
+    stops: [
+      [15, VIRIDIS_TEAL_AMBER[0]],
+      [21, VIRIDIS_TEAL_AMBER[1]],
+      [27, VIRIDIS_TEAL_AMBER[2]],
+      [35, VIRIDIS_TEAL_AMBER[3]],
+      [50, VIRIDIS_TEAL_AMBER[4]],
+    ],
+  },
+  pupil_teacher_ratio: {
+    key: 'pupil_teacher_ratio',
+    label: 'School Pupil-Teacher Ratio (UDISE+)',
+    shortLabel: 'Pupil-Teacher Ratio',
+    category: 'education',
+    categoryLabel: 'Education (UDISE+)',
+    unit: ':1 PTR',
+    sourceLabel: 'Unified District Information System for Education Plus (UDISE+, MoE)',
+    sourceUrl: 'https://dashboard.udiseplus.gov.in/',
+    dataGovUrl: 'https://data.gov.in/catalog/unified-district-information-system-education-udise',
+    description:
+      'Average number of enrolled students per teacher across school education stages (NEP 2020 target ≤30:1).',
+    polarity: 'lower_better',
+    benchmarkMax: 36,
+    defaultVisible: false,
+    stops: [
+      [19, HAZARD_STRESS_RAMP[0]],
+      [22, HAZARD_STRESS_RAMP[1]],
+      [24, HAZARD_STRESS_RAMP[2]],
+      [26, HAZARD_STRESS_RAMP[3]],
+      [28, HAZARD_STRESS_RAMP[4]],
+    ],
+  },
+  crime_rate_per_lakh: {
+    key: 'crime_rate_per_lakh',
+    label: 'Cognizable Crime Rate per Lakh (NCRB)',
+    shortLabel: 'Crime Rate (NCRB)',
+    category: 'safety',
+    categoryLabel: 'Public Safety (NCRB)',
+    unit: '/1L pop',
+    sourceLabel: 'National Crime Records Bureau (NCRB) — Crime in India (MHA)',
+    sourceUrl: 'https://ncrb.gov.in/crime-in-india.html',
+    dataGovUrl: 'https://data.gov.in/catalog/crime-india',
+    description:
+      'Registered IPC/BNS & SLL cognizable crimes per 1,00,000 population per official NCRB methodology.',
+    polarity: 'lower_better',
+    benchmarkMax: 2000,
+    defaultVisible: false,
+    stops: [
+      [500, HAZARD_STRESS_RAMP[0]],
+      [750, HAZARD_STRESS_RAMP[1]],
+      [1100, HAZARD_STRESS_RAMP[2]],
+      [1550, HAZARD_STRESS_RAMP[3]],
+      [1750, HAZARD_STRESS_RAMP[4]],
+    ],
+  },
   population_density: {
     key: 'population_density',
     label: 'Population Density (Census PCA)',
     shortLabel: 'Population Density',
+    category: 'demographics',
+    categoryLabel: 'Demographics',
     unit: '/km²',
     sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
     sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    dataGovUrl: 'https://data.gov.in/catalog/primary-census-abstract-pca',
+    description: 'Resident population per square kilometer from Primary Census Abstract.',
+    polarity: 'neutral',
+    benchmarkMax: 36000,
     defaultVisible: false,
     stops: [
       [600, VIRIDIS_TEAL_AMBER[0]],
@@ -237,9 +568,15 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
     key: 'literacy_rate',
     label: 'Literacy Rate (Census PCA)',
     shortLabel: 'Literacy Rate',
+    category: 'demographics',
+    categoryLabel: 'Demographics',
     unit: '%',
     sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
     sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    dataGovUrl: 'https://data.gov.in/catalog/primary-census-abstract-pca',
+    description: 'Effective literacy rate among population aged 7 years and above.',
+    polarity: 'higher_better',
+    benchmarkMax: 100,
     defaultVisible: false,
     stops: [
       [68, VIRIDIS_TEAL_AMBER[0]],
@@ -253,9 +590,15 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
     key: 'sex_ratio',
     label: 'Sex Ratio (Census PCA)',
     shortLabel: 'Sex Ratio',
+    category: 'demographics',
+    categoryLabel: 'Demographics',
     unit: 'F/1000M',
     sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
     sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    dataGovUrl: 'https://data.gov.in/catalog/primary-census-abstract-pca',
+    description: 'Number of females per 1,000 males in the resident population.',
+    polarity: 'higher_better',
+    benchmarkMax: 1000,
     defaultVisible: false,
     stops: [
       [830, VIRIDIS_TEAL_AMBER[0]],
@@ -266,6 +609,8 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
     ],
   },
 };
+
+export const ALL_METRIC_KEYS = Object.keys(METRIC_CONFIGS) as MetricKey[];
 
 const ALIAS_MAP: Record<string, string> = {
   gurgaon: 'gurugram',

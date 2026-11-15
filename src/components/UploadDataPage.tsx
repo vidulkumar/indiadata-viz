@@ -18,6 +18,7 @@ import {
   sanitizeText,
   sanitizeUrl,
 } from '../types';
+import { VERIFIED_API_PRESETS } from '../data/ncrDefaults';
 
 interface UploadDataPageProps {
   allRegions: Region[];
@@ -821,46 +822,86 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
             )}
 
             {sourceTab === 'api' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold mb-1">
-                    data.gov.in Resource ID
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                    Verified data.gov.in & Open Government Catalog Presets
                   </label>
-                  <input
-                    type="text"
-                    value={apiResourceId}
-                    onChange={(e) => setApiResourceId(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                      isDarkMode
-                        ? 'bg-slate-950 border-slate-800 text-slate-100'
-                        : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  />
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {VERIFIED_API_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setApiResourceId(preset.resourceId);
+                          setTitle(preset.label);
+                          setPublisher(preset.publisher);
+                          setSourceUrl(preset.sourceUrl);
+                          setDescription(preset.description);
+                          setMetricLabel(preset.category);
+                          setUnit(preset.unit);
+                        }}
+                        className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          apiResourceId === preset.resourceId
+                            ? 'bg-teal-500/15 border-teal-500/50 text-teal-200'
+                            : isDarkMode
+                              ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                              : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-800'
+                        }`}
+                      >
+                        <div className="text-xs font-bold truncate">{preset.label}</div>
+                        <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                          {preset.publisher}
+                        </div>
+                        <div className="text-[10px] font-mono text-teal-400 mt-1 truncate">
+                          ID: {preset.resourceId}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">
-                    API Key (Optional — uses proxy key if blank)
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Optional data.gov.in key"
-                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                      isDarkMode
-                        ? 'bg-slate-950 border-slate-800 text-slate-100'
-                        : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  />
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">
+                      data.gov.in Resource ID
+                    </label>
+                    <input
+                      type="text"
+                      value={apiResourceId}
+                      onChange={(e) => setApiResourceId(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                        isDarkMode
+                          ? 'bg-slate-950 border-slate-800 text-slate-100'
+                          : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">
+                      API Key (Optional — uses proxy key if blank)
+                    </label>
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="Optional data.gov.in key"
+                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                        isDarkMode
+                          ? 'bg-slate-950 border-slate-800 text-slate-100'
+                          : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleFetchGovernmentApi}
+                    disabled={loadingApi}
+                    className="px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs cursor-pointer"
+                  >
+                    {loadingApi ? 'Fetching Live Records…' : 'Fetch Live API Records'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleFetchGovernmentApi}
-                  disabled={loadingApi}
-                  className="px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs cursor-pointer"
-                >
-                  {loadingApi ? 'Fetching Live Records…' : 'Fetch Live API Records'}
-                </button>
               </div>
             )}
           </section>

@@ -5,7 +5,7 @@ import path from 'node:path';
 const RAW_DIR =
   process.env.RAW_GIS_DIR ||
   'C:\\Users\\ST\\.gemini\\antigravity\\brain\\cfe0871a-dd20-410c-b0f5-2f2ed7639e92\\scratch\\boundaries_raw';
-const OUT_DIR = path.resolve('public/boundaries');
+const OUT_DIR = path.resolve('data/seed-boundaries');
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 // ─── Douglas-Peucker Line Simplification ────────────────────────────────────

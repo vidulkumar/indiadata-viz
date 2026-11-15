@@ -32,98 +32,261 @@ export default {
     const sbUrl = env.SUPABASE_URL || '';
     const sbKey = env.SUPABASE_KEY || '';
 
-    // 1. Server-side Boundary Features API (keeps DB URL & key private on the Worker)
-    if (url.pathname === '/api/boundaries' && request.method === 'GET') {
+    // 1. Server-side Boundary Features API (reads normalized columns from Supabase PostgreSQL)
+    if (
+      (url.pathname === '/api/boundaries' || url.pathname === '/api/local/boundaries') &&
+      request.method === 'GET'
+    ) {
       const level = url.searchParams.get('level') || 'district';
-      if (sbUrl && sbKey) {
-        try {
-          const res = await fetch(
-            `${sbUrl}/rest/v1/boundary_features?select=*&level=eq.${encodeURIComponent(
-              level
-            )}&order=code.asc`,
+      if (!sbUrl || !sbKey) {
+        return new Response(
+          JSON.stringify({
+            error: 'Database connection not configured on Worker.',
+            features: [],
+          }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+          }
+        );
+      }
+
+      try {
+        const res = await fetch(
+          `${sbUrl}/rest/v1/boundary_features?select=*&level=eq.${encodeURIComponent(
+            level
+          )}&order=code.asc`,
+          {
+            headers: {
+              apikey: sbKey,
+              Authorization: `Bearer ${sbKey}`,
+            },
+          }
+        );
+        if (res.ok) {
+          const rows = (await res.json()) as any[];
+          const features = (Array.isArray(rows) ? rows : []).map((row) => ({
+            type: 'Feature',
+            properties: {
+              code: row.code,
+              name: row.name,
+              state: row.state,
+              parent_region: row.parent_region,
+              level: row.level,
+              area_sq_km: Number(row.area_sq_km || 0),
+              population: Number(row.population || 0),
+              population_density: Number(row.population_density || 0),
+              density: Number(row.population_density || 0),
+              literacy_rate: Number(row.literacy_rate || 0),
+              sex_ratio: Number(row.sex_ratio || 0),
+              green_cover_pct: Number(row.green_cover_pct || 0),
+              isfr_benchmark_region: row.isfr_benchmark_region || null,
+              aqi_pm25: Number(row.aqi_pm25 || 0),
+              pm25_ugm3: Number(row.pm25_ugm3 || 0),
+              pm10_ugm3: Number(row.pm10_ugm3 || 0),
+              no2_ugm3: Number(row.no2_ugm3 || 0),
+              cpcb_station_name: row.cpcb_station_name || null,
+              groundwater_extraction_pct: Number(row.groundwater_extraction_pct || 0),
+              groundwater_depth_m: Number(row.groundwater_depth_m || 0),
+              cgwb_category: row.cgwb_category || null,
+              cgwb_source_label: row.cgwb_source_label || null,
+              cgwb_source_url: row.cgwb_source_url || null,
+              clean_fuel_pct: Number(row.clean_fuel_pct || 0),
+              piped_water_pct: Number(row.piped_water_pct || 0),
+              stunting_pct: Number(row.stunting_pct || 0),
+              nfhs_source_label: row.nfhs_source_label || null,
+              nfhs_source_url: row.nfhs_source_url || null,
+              pupil_teacher_ratio: Number(row.pupil_teacher_ratio || 0),
+              udise_source_label: row.udise_source_label || null,
+              udise_source_url: row.udise_source_url || null,
+              crime_rate_per_lakh: Number(row.crime_rate_per_lakh || 0),
+              ncrb_source_label: row.ncrb_source_label || null,
+              ncrb_source_url: row.ncrb_source_url || null,
+              hospital_beds_per_10k: Number(row.hospital_beds_per_10k || 0),
+              health_source_label: row.health_source_label || null,
+              health_source_url: row.health_source_url || null,
+              rep_name: row.rep_name,
+              rep_role: row.rep_role,
+              rep_party: row.rep_party,
+              rep_term: row.rep_term,
+              rep_votes: row.rep_votes,
+              rep_source_label: row.rep_source_label,
+              rep_source_url: row.rep_source_url,
+              rep_affidavit_url: row.rep_affidavit_url,
+              green_source_label: row.green_source_label,
+              green_source_url: row.green_source_url,
+              pollution_source_label: row.pollution_source_label,
+              pollution_source_url: row.pollution_source_url,
+              census_source_label: row.census_source_label,
+              census_source_url: row.census_source_url,
+              boundary_source_label: row.boundary_source_label,
+              boundary_source_url: row.boundary_source_url,
+              data_source_label: row.data_source_label,
+              data_source_url: row.data_source_url,
+              center: row.center,
+            },
+            geometry: row.geojson,
+          }));
+          return new Response(
+            JSON.stringify({
+              type: 'FeatureCollection',
+              features,
+              source: 'supabase-postgres',
+            }),
             {
               headers: {
-                apikey: sbKey,
-                Authorization: `Bearer ${sbKey}`,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, max-age=300',
+                ...CORS_HEADERS,
               },
             }
           );
-          if (res.ok) {
-            const rows = (await res.json()) as any[];
-            if (Array.isArray(rows) && rows.length > 0) {
-              const features = rows.map((row) => ({
-                type: 'Feature',
-                properties: {
-                  ...(row.properties || {}),
-                  code: row.code,
-                  name: row.name,
-                  state: row.state,
-                  parent_region: row.parent_region,
-                  level: row.level,
-                  area_sq_km: Number(row.area_sq_km || row.properties?.area_sq_km || 0),
-                  green_cover_pct: Number(
-                    row.green_cover_pct || row.properties?.green_cover_pct || 0
-                  ),
-                  aqi_pm25: Number(row.aqi_pm25 || row.properties?.aqi_pm25 || 0),
-                  pm25_ugm3: Number(row.properties?.pm25_ugm3 || 0),
-                  pm10_ugm3: Number(row.properties?.pm10_ugm3 || 0),
-                  no2_ugm3: Number(row.properties?.no2_ugm3 || 0),
-                  cpcb_station_name: row.properties?.cpcb_station_name || null,
-                  isfr_benchmark_region: row.properties?.isfr_benchmark_region || null,
-                  population_density: Number(
-                    row.population_density || row.properties?.population_density || 0
-                  ),
-                  density: Number(
-                    row.population_density || row.properties?.population_density || 0
-                  ),
-                  literacy_rate: Number(
-                    row.literacy_rate || row.properties?.literacy_rate || 0
-                  ),
-                  sex_ratio: Number(row.sex_ratio || row.properties?.sex_ratio || 0),
-                  rep_name: row.rep_name,
-                  rep_role: row.rep_role,
-                  rep_party: row.rep_party,
-                  rep_term: row.rep_term,
-                  rep_votes: row.rep_votes,
-                  rep_source_label: row.rep_source_label,
-                  rep_source_url: row.rep_source_url,
-                  rep_affidavit_url: row.rep_affidavit_url,
-                  boundary_source_label: row.boundary_source_label,
-                  boundary_source_url: row.boundary_source_url,
-                  data_source_label: row.data_source_label,
-                  data_source_url: row.data_source_url,
-                  center: row.center,
-                },
-                geometry: row.geojson,
-              }));
-              return new Response(
-                JSON.stringify({ type: 'FeatureCollection', features }),
-                {
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Cache-Control': 'public, max-age=300',
-                    ...CORS_HEADERS,
-                  },
-                }
-              );
-            }
-          }
-        } catch {
-          // fallback to static edge GeoJSON below
         }
+      } catch (err: unknown) {
+        return new Response(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : 'Database fetch error',
+            features: [],
+          }),
+          {
+            status: 502,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+          }
+        );
       }
-
-      const fileMap: Record<string, string> = {
-        district: '/boundaries/districts.geojson',
-        constituency: '/boundaries/constituencies.geojson',
-        assembly: '/boundaries/assemblies.geojson',
-        ward: '/boundaries/wards.geojson',
-      };
-      const assetPath = fileMap[level] || '/boundaries/districts.geojson';
-      return env.ASSETS.fetch(new Request(new URL(assetPath, request.url), request));
     }
 
-    // 2. CORS-safe Proxy for data.gov.in APIs
+    // 2. Server-side Spatial Overlay Layers & CPCB Stations API (reads from relational DB tables)
+    if (
+      (url.pathname === '/api/spatial-layers' ||
+        url.pathname === '/api/local/spatial-layers') &&
+      request.method === 'GET'
+    ) {
+      if (!sbUrl || !sbKey) {
+        return new Response(
+          JSON.stringify({ overlayLayers: [], cpcbStations: [] }),
+          { headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      const headers = {
+        apikey: sbKey,
+        Authorization: `Bearer ${sbKey}`,
+      };
+
+      const [layersRes, pointsRes, linesRes, stationsRes] = await Promise.all([
+        fetch(`${sbUrl}/rest/v1/spatial_overlay_layers?select=*&order=sort_order.asc`, {
+          headers,
+        }),
+        fetch(`${sbUrl}/rest/v1/spatial_overlay_points?select=*`, { headers }),
+        fetch(`${sbUrl}/rest/v1/spatial_overlay_lines?select=*`, { headers }),
+        fetch(`${sbUrl}/rest/v1/cpcb_stations?select=*`, { headers }),
+      ]);
+
+      const layerRows = (layersRes.ok ? await layersRes.json() : []) as any[];
+      const pointRows = (pointsRes.ok ? await pointsRes.json() : []) as any[];
+      const lineRows = (linesRes.ok ? await linesRes.json() : []) as any[];
+      const stationRows = (stationsRes.ok ? await stationsRes.json() : []) as any[];
+
+      const overlayLayers = layerRows.map((l) => {
+        const pts = pointRows
+          .filter((p) => p.layer_id === l.id)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            city: p.city,
+            state: p.state,
+            lat: Number(p.lat),
+            lon: Number(p.lon),
+            primaryMetricLabel: p.primary_metric_label,
+            primaryMetricValue: Number(p.primary_metric_value),
+            primaryMetricUnit: p.primary_metric_unit,
+            secondaryMetricLabel: p.secondary_metric_label || undefined,
+            secondaryMetricValue: p.secondary_metric_value || undefined,
+            secondaryMetricUnit: p.secondary_metric_unit || undefined,
+            statusBadge: p.status_badge || undefined,
+            agency: p.agency,
+            sourceLabel: p.source_label,
+            sourceUrl: p.source_url,
+            dataGovUrl: p.data_gov_url || undefined,
+            color: p.color || l.color,
+          }));
+
+        const lns = lineRows
+          .filter((ln) => ln.layer_id === l.id)
+          .map((ln) => ({
+            id: ln.id,
+            name: ln.name,
+            code: ln.corridor_type,
+            color: ln.color,
+            operator: ln.agency,
+            routeLengthKm: Number(ln.length_km),
+            stationsCount: Number(ln.stations_count),
+            dailyRidershipEst:
+              ln.daily_ridership_lakh !== null
+                ? `${ln.daily_ridership_lakh} Lakh passenger journeys/day`
+                : 'Operational Rapid Transit Corridor',
+            terminalEndpoints: ln.status,
+            sourceLabel: ln.source_label,
+            sourceUrl: ln.source_url,
+            coordinates: Array.isArray(ln.coordinates) ? ln.coordinates : [],
+          }));
+
+        return {
+          id: l.id,
+          title: l.title,
+          shortTitle: l.short_title,
+          category: l.category,
+          categoryLabel: l.category_label,
+          geometryType:
+            l.geometry_type === 'hybrid' ? 'line-network' : l.geometry_type,
+          geometryLabel: l.geometry_label,
+          unit: l.unit,
+          publisher: l.publisher,
+          sourceUrl: l.source_url,
+          dataGovUrl: l.data_gov_url || undefined,
+          description: l.description,
+          color: l.color,
+          badgeText: l.badge_text,
+          defaultVisible: Boolean(l.default_visible),
+          defaultOpacity: Number(l.default_opacity),
+          points: pts.length > 0 ? pts : undefined,
+          lines: lns.length > 0 ? lns : undefined,
+        };
+      });
+
+      const cpcbStations = stationRows.map((s) => ({
+        station: s.name,
+        city: s.city,
+        state: s.state,
+        lat: Number(s.lat),
+        lon: Number(s.lon),
+        aqi: Number(s.aqi),
+        pm25: Number(s.pm25),
+        pm10: Number(s.pm10),
+        no2: Number(s.no2),
+        updated: s.last_updated,
+        sourceLabel: s.source,
+        sourceUrl: s.source_url,
+      }));
+
+      return new Response(
+        JSON.stringify({
+          overlayLayers,
+          cpcbStations,
+          source: 'supabase-postgres',
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=300',
+            ...CORS_HEADERS,
+          },
+        }
+      );
+    }
+
+    // 3. CORS-safe Proxy for data.gov.in APIs
     if (url.pathname === '/api/datagov') {
       const resourceId =
         url.searchParams.get('resource_id') || '3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69';
@@ -166,7 +329,7 @@ export default {
       }
     }
 
-    // 3. CORS-safe Proxy for OpenCity CKAN API
+    // 4. CORS-safe Proxy for OpenCity CKAN API
     if (url.pathname === '/api/ckan') {
       const query = url.searchParams.get('q') || 'delhi';
       const resourceId = url.searchParams.get('resource_id') || '';
@@ -206,8 +369,8 @@ export default {
       }
     }
 
-    // 4. Server-side Sanitization & Proxy for /api/community-layers
-    if (url.pathname === '/api/community-layers') {
+    // 5. Server-side Sanitization & Proxy for /api/community-layers
+    if (url.pathname === '/api/community-layers' || url.pathname === '/api/local/community-layers') {
       if (!sbUrl || !sbKey) {
         return new Response(JSON.stringify({ records: [] }), {
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
@@ -247,7 +410,12 @@ export default {
             description: sanitizeStr(body.description || '', 1000),
             methodology: sanitizeStr(body.methodology || '', 1000),
             target_state: sanitizeStr(body.target_state || 'All NCR', 80),
-            layer_type: body.layer_type === 'point' ? 'point' : 'choropleth',
+            layer_type:
+              body.layer_type === 'point'
+                ? 'point'
+                : body.layer_type === 'line'
+                  ? 'line'
+                  : 'choropleth',
             boundary_level: ['district', 'constituency', 'assembly', 'ward'].includes(
               String(body.boundary_level)
             )
