@@ -11,13 +11,21 @@ import {
 import {
   BoundaryLevel,
   CustomLayer,
+  LiveAggregate,
+  LiveSourceConfig,
   Region,
   detectBestBoundaryLevel,
-  fuzzyMatchRegion,
-  isValidIndiaCoord,
   sanitizeText,
   sanitizeUrl,
 } from '../types';
+import {
+  buildChoropleth,
+  buildPoints,
+  fetchLiveRows,
+  formatFilters,
+  matchRegion,
+  parseFilterText,
+} from '../lib/liveSource';
 import { VERIFIED_API_PRESETS } from '../data/ncrDefaults';
 
 interface UploadDataPageProps {
@@ -27,7 +35,32 @@ interface UploadDataPageProps {
   onPublishLayer: (layer: CustomLayer) => Promise<void>;
 }
 
-type SourceTab = 'csv' | 'excel' | 'json' | 'api';
+type SourceTab = 'csv' | 'excel' | 'json' | 'api' | 'catalog';
+
+interface LiveSourceRef {
+  portal: 'data.gov.in' | 'ckan';
+  resourceId: string;
+  filters: Record<string, string>;
+  total: number;
+}
+
+interface CkanResource {
+  id: string;
+  name?: string;
+  format?: string;
+  datastore_active?: boolean;
+}
+interface CkanPackage {
+  id: string;
+  name: string;
+  title: string;
+  notes?: string;
+  organization?: { title?: string } | null;
+  resources: CkanResource[];
+}
+
+const PREVIEW_ROWS = 200;
+const FULL_ROWS = 5000;
 
 function parseCsvLine(line: string): string[] {
   const result: string[] = [];
@@ -95,6 +128,19 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
   const [apiResourceId, setApiResourceId] = useState('3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69');
   const [apiKey, setApiKey] = useState('');
   const [loadingApi, setLoadingApi] = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [sourceFields, setSourceFields] = useState<string[]>([]);
+
+  // Live linking: when the rows come from a portal API we can store only the mapping
+  const [liveSource, setLiveSource] = useState<LiveSourceRef | null>(null);
+  const [storeMode, setStoreMode] = useState<'live' | 'snapshot'>('live');
+  const [aggregate, setAggregate] = useState<LiveAggregate>('avg');
+  const [nameOverrides, setNameOverrides] = useState<Record<string, string>>({});
+
+  // Catalog search (OpenCity CKAN)
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const [catalogResults, setCatalogResults] = useState<CkanPackage[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
 
   // Step 3: Column Mapping
   const [areaColumn, setAreaColumn] = useState('');
@@ -176,6 +222,8 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
     if (!file) return;
     setErrorMsg(null);
     setFileName(file.name);
+    setLiveSource(null);
+    setNameOverrides({});
 
     try {
       if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
@@ -219,39 +267,83 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
       return;
     }
     setFileName('Pasted CSV Table');
+    setLiveSource(null);
+    setNameOverrides({});
     setRows(parsed);
     autoDetectColumns(parsed);
   };
 
-  const handleFetchGovernmentApi = async () => {
+  // Shared by the Resource-ID tab and the catalog picker
+  const loadSourceRows = async (
+    ref: { portal: 'data.gov.in' | 'ckan'; resourceId: string; filters: Record<string, string> },
+    maxRows: number
+  ) => {
     setLoadingApi(true);
     setErrorMsg(null);
     try {
-      const params = new URLSearchParams({
-        resource_id: apiResourceId.trim(),
-        limit: '100',
-      });
-      if (apiKey.trim()) params.set('api_key', apiKey.trim());
-      const res = await fetch(`/api/datagov?${params.toString()}`);
-      const data = await res.json();
-      const records = Array.isArray(data.records) ? data.records : [];
-      if (records.length === 0) {
-        setErrorMsg(
-          'No records returned from data.gov.in resource. Verify the Resource ID or API key.'
-        );
-        return;
-      }
-      setFileName(`data.gov.in (${apiResourceId.slice(0, 12)}…)`);
-      setRows(records);
-      autoDetectColumns(records);
-      if (!sourceUrl) {
-        setSourceUrl(`https://data.gov.in/resource/${apiResourceId.trim()}`);
-      }
+      const res = await fetchLiveRows(ref, { maxRows, apiKey: apiKey.trim() || undefined });
+      setRows(res.rows);
+      setSourceFields(res.fields);
+      setLiveSource({ ...ref, total: res.total });
+      setNameOverrides({});
+      setFileName(
+        `${ref.portal === 'ckan' ? 'OpenCity' : 'data.gov.in'} (${ref.resourceId.slice(0, 8)}…) — ${res.rows.length} of ${res.total} rows`
+      );
+      autoDetectColumns(res.rows);
+      return true;
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to fetch from data.gov.in proxy.');
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to fetch from the source portal.');
+      return false;
     } finally {
       setLoadingApi(false);
     }
+  };
+
+  const handleFetchGovernmentApi = async () => {
+    const id = apiResourceId.trim();
+    const ok = await loadSourceRows(
+      { portal: 'data.gov.in', resourceId: id, filters: parseFilterText(filterText) },
+      PREVIEW_ROWS
+    );
+    if (ok && !sourceUrl) setSourceUrl(`https://data.gov.in/resource/${id}`);
+  };
+
+  const handleLoadAllRows = async () => {
+    if (!liveSource) return;
+    await loadSourceRows(
+      { portal: liveSource.portal, resourceId: liveSource.resourceId, filters: liveSource.filters },
+      FULL_ROWS
+    );
+  };
+
+  const handleCatalogSearch = async () => {
+    setCatalogLoading(true);
+    setErrorMsg(null);
+    try {
+      const q = new URLSearchParams({ action: 'package_search', q: catalogQuery.trim(), rows: '10' });
+      const res = await fetch(`/api/ckan?${q.toString()}`);
+      const data = await res.json();
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.error?.message || data?.error || `Catalog search failed (HTTP ${res.status})`);
+      }
+      setCatalogResults(Array.isArray(data?.result?.results) ? data.result.results : []);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Catalog search failed.');
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const handlePickCkanResource = async (pkg: CkanPackage, resource: CkanResource) => {
+    const ok = await loadSourceRows(
+      { portal: 'ckan', resourceId: resource.id, filters: parseFilterText(filterText) },
+      PREVIEW_ROWS
+    );
+    if (!ok) return;
+    if (!title) setTitle(pkg.title);
+    if (!publisher) setPublisher(pkg.organization?.title || 'OpenCity');
+    if (!sourceUrl) setSourceUrl(`https://data.opencity.in/dataset/${pkg.name}`);
+    if (!description && pkg.notes) setDescription(sanitizeText(pkg.notes, 400));
   };
 
   // Live boundary match verification preview
@@ -283,7 +375,7 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
     let matchedCount = 0;
     const matchedRows = rows.map((r, idx) => {
       const rawArea = String(r[areaColumn] ?? '');
-      const matchedRegion = fuzzyMatchRegion(rawArea, tierRegions, stateHints?.[idx]);
+      const matchedRegion = matchRegion(rawArea, stateHints?.[idx], tierRegions, nameOverrides);
       if (matchedRegion) matchedCount++;
       const numVal = Number(String(r[valueColumn] ?? '0').replace(/,/g, ''));
       const dateStr = dateColumn ? String(r[dateColumn] ?? 'Latest') : 'Latest';
@@ -296,7 +388,34 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
     });
 
     return { tierRegions, matchedRows, matchedCount, detection };
-  }, [rows, mappingMode, areaColumn, stateColumn, valueColumn, dateColumn, boundaryLevel, allRegions, targetState]);
+  }, [rows, mappingMode, areaColumn, stateColumn, valueColumn, dateColumn, boundaryLevel, allRegions, targetState, nameOverrides]);
+
+  // Column mapping shared by the live link and the snapshot path, so both produce identical data
+  const mapping = useMemo(
+    () => ({
+      areaColumn,
+      stateColumn: stateColumn || undefined,
+      valueColumn,
+      dateColumn: dateColumn || undefined,
+      latColumn,
+      lonColumn,
+      labelColumn,
+      aggregate,
+      nameOverrides,
+      stateHint: targetState !== 'All NCR' ? targetState : undefined,
+    }),
+    [areaColumn, stateColumn, valueColumn, dateColumn, latColumn, lonColumn, labelColumn, aggregate, nameOverrides, targetState]
+  );
+
+  // Distinct source names the matcher could not place, so the user can assign them by hand
+  const unmatchedNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of matchPreview.matchedRows) {
+      const name = row.rawArea.trim();
+      if (!row.matchedRegion && name) counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    return [...counts.entries()].slice(0, 40);
+  }, [matchPreview]);
 
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -335,6 +454,25 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
       return;
     }
 
+    // Live link: persist only the mapping; the rows stay at the source portal
+    const isLiveStore = storeMode === 'live' && liveSource !== null;
+    const buildLiveConfig = (): LiveSourceConfig => ({
+      portal: liveSource!.portal,
+      resourceId: liveSource!.resourceId,
+      filters: liveSource!.filters,
+      ...mapping,
+      maxRows: FULL_ROWS,
+    });
+    const liveFields = (matched: number, total: number, unmatched: string[]) =>
+      isLiveStore
+        ? {
+            sourceMode: 'live' as const,
+            liveConfig: buildLiveConfig(),
+            liveLoaded: true,
+            liveInfo: { state: 'ready' as const, fetchedAt: Date.now(), matched, total, unmatched },
+          }
+        : { sourceMode: 'snapshot' as const };
+
     setSubmitting(true);
     try {
       const slug = `comm-${cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString().slice(-5)}`;
@@ -353,15 +491,14 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
           return;
         }
 
-        const choroplethByDate: Record<string, Record<string, number>> = {};
-        for (const item of matchPreview.matchedRows) {
-          if (!item.matchedRegion) continue;
-          const d = item.date || 'Latest';
-          if (!choroplethByDate[d]) choroplethByDate[d] = {};
-          choroplethByDate[d][item.matchedRegion.code] = item.value;
+        const built = buildChoropleth(rows, mapping, matchPreview.tierRegions);
+        const choroplethByDate = built.choroplethByDate;
+        const availableDates = built.availableDates;
+        if (availableDates.length === 0) {
+          setErrorMsg('No rows with a numeric value matched a boundary. Check the Metric Value column.');
+          setSubmitting(false);
+          return;
         }
-
-        const availableDates = Object.keys(choroplethByDate).sort();
         const activeDate = availableDates[availableDates.length - 1] || 'Latest';
 
         const newLayer: CustomLayer = {
@@ -382,12 +519,13 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
           color: layerColor,
           visible: true,
           opacity: 0.78,
-          featureCount: matchPreview.matchedCount,
+          featureCount: built.matchedRegions,
           availableDates,
           activeDate,
           choroplethByDate,
           geojson: { type: 'FeatureCollection', features: [] },
-          rawRows: rows,
+          rawRows: isLiveStore ? undefined : rows,
+          ...liveFields(built.matchedRows, built.totalRows, built.unmatched),
         };
 
         await onPublishLayer(newLayer);
@@ -398,32 +536,14 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
           return;
         }
 
-        const pointsByDate: Record<string, Array<Record<string, unknown>>> = {};
-        const features: Array<Record<string, unknown>> = [];
-
-        rows.forEach((r, idx) => {
-          const lat = Number(r[latColumn]);
-          const lon = Number(r[lonColumn]);
-          if (!isValidIndiaCoord(lat, lon)) return;
-          const val = Number(String(r[valueColumn] ?? '0').replace(/,/g, '')) || 0;
-          const d = dateColumn ? String(r[dateColumn] ?? 'Latest') : 'Latest';
-          const label = labelColumn ? String(r[labelColumn] ?? `Point ${idx + 1}`) : `Point ${idx + 1}`;
-          if (!pointsByDate[d]) pointsByDate[d] = [];
-          pointsByDate[d].push({ lat, lon, label, value: val });
-          features.push({
-            type: 'Feature',
-            properties: {
-              id: `${slug}-pt-${idx}`,
-              name: label,
-              value: val,
-              unit: cleanUnit,
-              date: d,
-              sourceUrl: cleanUrl,
-              publisher: cleanPublisher,
-            },
-            geometry: { type: 'Point', coordinates: [lon, lat] },
-          });
+        const builtPoints = buildPoints(rows, mapping, {
+          slug,
+          unit: cleanUnit,
+          sourceUrl: cleanUrl,
+          publisher: cleanPublisher,
         });
+        const pointsByDate = builtPoints.pointsByDate;
+        const features = builtPoints.features;
 
         if (features.length === 0) {
           setErrorMsg('No valid India GPS coordinates (Lat 6..38, Lon 68..98) found in the selected columns.');
@@ -431,7 +551,7 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
           return;
         }
 
-        const availableDates = Object.keys(pointsByDate).sort();
+        const availableDates = builtPoints.availableDates;
         const activeDate = availableDates[availableDates.length - 1] || 'Latest';
 
         const newLayer: CustomLayer = {
@@ -456,7 +576,8 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
           activeDate,
           pointsByDate,
           geojson: { type: 'FeatureCollection', features },
-          rawRows: rows,
+          rawRows: isLiveStore ? undefined : rows,
+          ...liveFields(features.length, rows.length, []),
         };
 
         await onPublishLayer(newLayer);
@@ -733,6 +854,7 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
                     { id: 'csv', label: 'CSV / Paste Table' },
                     { id: 'json', label: 'JSON / GeoJSON' },
                     { id: 'api', label: 'data.gov.in API' },
+                    { id: 'catalog', label: 'Search OpenCity Catalog' },
                   ] as const
                 ).map((t) => (
                   <button
@@ -902,6 +1024,93 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
                     {loadingApi ? 'Fetching Live Records…' : 'Fetch Live API Records'}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {sourceTab === 'catalog' && (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={catalogQuery}
+                    onChange={(e) => setCatalogQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCatalogSearch();
+                      }
+                    }}
+                    placeholder="Search OpenCity datasets, e.g. ward population, air quality"
+                    className={`w-full px-3 py-2 rounded-xl text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCatalogSearch}
+                    disabled={catalogLoading}
+                    className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {catalogLoading ? 'Searching…' : 'Search'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Only resources with an active datastore can be linked live. For data.gov.in, use the Resource ID in the data.gov.in tab.
+                </p>
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {catalogResults.map((pkg) => (
+                    <div
+                      key={pkg.id}
+                      className={`p-3 rounded-xl border ${isDarkMode ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}
+                    >
+                      <div className="text-xs font-bold">{pkg.title}</div>
+                      <div className="text-[11px] text-slate-400 mb-2">
+                        {pkg.organization?.title || 'OpenCity'}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {pkg.resources.map((res) =>
+                          res.datastore_active ? (
+                            <button
+                              key={res.id}
+                              type="button"
+                              disabled={loadingApi}
+                              onClick={() => handlePickCkanResource(pkg, res)}
+                              className="px-2.5 py-1 rounded-lg bg-teal-500/15 border border-teal-500/40 text-teal-300 text-[11px] font-semibold cursor-pointer hover:bg-teal-500/25"
+                            >
+                              {res.name || res.format || res.id.slice(0, 8)} · {res.format || 'data'}
+                            </button>
+                          ) : (
+                            <span
+                              key={res.id}
+                              className="px-2.5 py-1 rounded-lg border border-slate-700 text-slate-500 text-[11px]"
+                              title="No live datastore API for this file"
+                            >
+                              {res.name || res.format || res.id.slice(0, 8)} · no live API
+                            </span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(sourceTab === 'api' || sourceTab === 'catalog') && (
+              <div className="mt-4">
+                <label className="block text-xs font-semibold mb-1">
+                  Server-side filters (optional): column=value, comma separated
+                </label>
+                <input
+                  type="text"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder="e.g. State=Delhi, District=South Delhi"
+                  className={`w-full px-3 py-2 rounded-xl text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                />
+                {sourceFields.length > 0 && (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Columns in this resource (names are case-sensitive): {sourceFields.join(', ')}
+                  </p>
+                )}
               </div>
             )}
           </section>
@@ -1178,6 +1387,127 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
             </section>
           )}
 
+          {mappingMode === 'choropleth' && rows.length > 0 && (
+            <section
+              className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-slate-900/70 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    When several rows hit the same region
+                  </label>
+                  <select
+                    value={aggregate}
+                    onChange={(e) => setAggregate(e.target.value as LiveAggregate)}
+                    className={`w-full px-3 py-2 rounded-xl text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  >
+                    <option value="avg">Average the values</option>
+                    <option value="sum">Add the values (counts, totals)</option>
+                    <option value="max">Take the highest</option>
+                    <option value="min">Take the lowest</option>
+                    <option value="last">Take the last row</option>
+                  </select>
+                </div>
+              </div>
+
+              {unmatchedNames.length > 0 && (
+                <div className="mt-5">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-1">
+                    {unmatchedNames.length} source names did not match a {boundaryLevel}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mb-3">
+                    Assign them to the standard boundary. Your choices are saved with the layer, so the mapping survives every future refresh.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                    {unmatchedNames.map(([name, count]) => (
+                      <div key={name} className="flex items-center gap-2 text-xs">
+                        <span className="flex-1 truncate" title={name}>
+                          {name} <span className="text-slate-500">×{count}</span>
+                        </span>
+                        <select
+                          value={nameOverrides[name] || ''}
+                          onChange={(e) =>
+                            setNameOverrides((prev) => {
+                              const next = { ...prev };
+                              if (e.target.value) next[name] = e.target.value;
+                              else delete next[name];
+                              return next;
+                            })
+                          }
+                          className={`w-44 px-2 py-1.5 rounded-lg text-xs border ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                        >
+                          <option value="">Skip</option>
+                          {[...matchPreview.tierRegions]
+                            .sort((x, y) => x.name.localeCompare(y.name))
+                            .map((r) => (
+                              <option key={r.code} value={r.code}>
+                                {r.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {liveSource && rows.length > 0 && (
+            <section
+              className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-slate-900/70 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+            >
+              <h2 className="text-sm font-bold uppercase tracking-wider text-teal-400 mb-2">
+                How should this dataset be stored?
+              </h2>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Loaded {rows.length} of {liveSource.total} rows from{' '}
+                {liveSource.portal === 'ckan' ? 'OpenCity' : 'data.gov.in'}.
+              </p>
+              {rows.length < liveSource.total && (
+                <button
+                  type="button"
+                  onClick={handleLoadAllRows}
+                  disabled={loadingApi}
+                  className="mb-4 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-400 border border-slate-700 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {loadingApi ? 'Loading…' : `Load more rows (up to ${FULL_ROWS})`}
+                </button>
+              )}
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="storeMode"
+                    checked={storeMode === 'live'}
+                    onChange={() => setStoreMode('live')}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <strong>Link live (recommended).</strong> Saves only the Resource ID, filters and column mapping. Values are fetched from the portal each time the layer is shown, so they never go stale.
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="storeMode"
+                    checked={storeMode === 'snapshot'}
+                    onChange={() => setStoreMode('snapshot')}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <strong>Save a snapshot copy.</strong> Stores the {rows.length} loaded rows in the database. Use this only if the portal may remove or change the data.
+                  </span>
+                </label>
+              </div>
+              {storeMode === 'live' && formatFilters(liveSource.filters) && (
+                <p className="text-[11px] text-slate-500 mt-3">
+                  Filters kept with the link: {formatFilters(liveSource.filters)}
+                </p>
+              )}
+            </section>
+          )}
+
           {/* SUBMIT BUTTON */}
           <div className="flex items-center justify-end gap-4">
             <button
@@ -1195,7 +1525,9 @@ export const UploadDataPage: React.FC<UploadDataPageProps> = ({
               <CheckCircle2 className="w-4 h-4" />
               {submitting
                 ? 'Publishing & Mapping Layer…'
-                : 'Publish Dataset & Open on Home Map'}
+                : liveSource && storeMode === 'live'
+                  ? 'Publish Live Link & Open on Home Map'
+                  : 'Publish Dataset & Open on Home Map'}
             </button>
           </div>
         </form>

@@ -243,6 +243,20 @@ export function getLocalDb() {
     }
   }
 
+  // Live-linked layers: only the mapping definition is stored, never the source rows
+  const layerCols = new Set(
+    db
+      .prepare('PRAGMA table_info(community_layers)')
+      .all()
+      .map((c) => c.name)
+  );
+  if (!layerCols.has('source_mode')) {
+    db.exec("ALTER TABLE community_layers ADD COLUMN source_mode TEXT NOT NULL DEFAULT 'snapshot';");
+  }
+  if (!layerCols.has('live_config_json')) {
+    db.exec('ALTER TABLE community_layers ADD COLUMN live_config_json TEXT;');
+  }
+
   dbInstance = db;
   ensureBoundariesSeeded(db);
   return db;

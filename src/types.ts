@@ -212,9 +212,50 @@ export interface VerifiedOverlayLayerConfig {
   lines?: VerifiedLineCorridor[];
 }
 
+// ─── Live-linked layers: the DB stores only this mapping, never the source rows ──
+export type LiveAggregate = 'avg' | 'sum' | 'max' | 'min' | 'last';
+
+export interface LiveMapping {
+  areaColumn?: string;
+  stateColumn?: string;
+  valueColumn?: string;
+  dateColumn?: string;
+  latColumn?: string;
+  lonColumn?: string;
+  labelColumn?: string;
+  /** How several source rows that land on the same region/date are combined. */
+  aggregate?: LiveAggregate;
+  /** Manual fixes for names the matcher could not resolve: raw source name → boundary code. */
+  nameOverrides?: Record<string, string>;
+  /** Fixed state/city hint used to disambiguate names when the source has no state column. */
+  stateHint?: string;
+}
+
+export interface LiveSourceConfig extends LiveMapping {
+  portal: 'data.gov.in' | 'ckan';
+  resourceId: string;
+  /** Server-side filters, e.g. { State: 'Delhi' } (column names are case-sensitive). */
+  filters?: Record<string, string>;
+  maxRows?: number;
+}
+
+export interface LiveInfo {
+  state: 'idle' | 'loading' | 'ready' | 'error';
+  message?: string;
+  fetchedAt?: number;
+  matched?: number;
+  total?: number;
+  unmatched?: string[];
+}
+
 export interface CustomLayer {
   id: string;
   slug?: string;
+  /** 'live' layers keep only `liveConfig` in the DB; rows are fetched from the source portal on view. */
+  sourceMode?: 'snapshot' | 'live';
+  liveConfig?: LiveSourceConfig;
+  liveLoaded?: boolean;
+  liveInfo?: LiveInfo;
   name: string;
   description?: string;
   methodology?: string;
@@ -264,6 +305,8 @@ export interface CommunityCatalogLayer {
   available_dates: string[];
   choropleth_by_date: Record<string, Record<string, number>>;
   points_by_date: Record<string, Array<Record<string, unknown>>>;
+  source_mode?: 'snapshot' | 'live';
+  live_config?: LiveSourceConfig | null;
   created_at: string;
 }
 

@@ -1,9 +1,19 @@
+import {
+  buildCkanTarget,
+  buildDatagovTarget,
+  fetchCached,
+  sanitizeLiveConfig,
+  upstreamErrorBody,
+} from './lib/proxyCore';
+
 export interface Env {
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
   SUPABASE_URL?: string;
   SUPABASE_KEY?: string;
+  /** data.gov.in API key. Set with: wrangler secret put DATAGOV_API_KEY */
+  DATAGOV_API_KEY?: string;
 }
 
 const CORS_HEADERS = {
@@ -11,6 +21,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
 
 function sanitizeStr(val: unknown, maxLen = 500): string {
   return String(val ?? '')
@@ -286,85 +303,42 @@ export default {
       );
     }
 
-    // 3. CORS-safe Proxy for data.gov.in APIs
-    if (url.pathname === '/api/datagov') {
-      const resourceId =
-        url.searchParams.get('resource_id') || '3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69';
-      const apiKey =
-        url.searchParams.get('api_key') ||
-        '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b';
-      const limit = url.searchParams.get('limit') || '100';
-      const offset = url.searchParams.get('offset') || '0';
-
-      try {
-        const targetUrl = `https://api.data.gov.in/resource/${encodeURIComponent(
-          resourceId
-        )}?api-key=${encodeURIComponent(apiKey)}&format=json&limit=${encodeURIComponent(
-          limit
-        )}&offset=${encodeURIComponent(offset)}`;
-        const upstream = await fetch(targetUrl, {
-          headers: { Accept: 'application/json' },
-        });
-        const data = await upstream.json();
-        return new Response(JSON.stringify({ source: 'data.gov.in-live', ...data }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=300',
-            ...CORS_HEADERS,
-          },
-        });
-      } catch (err: unknown) {
-        return new Response(
-          JSON.stringify({
-            error: err instanceof Error ? err.message : 'Upstream data.gov.in fetch error',
-          }),
+    // 3 & 4. CORS-safe proxies for data.gov.in and OpenCity CKAN (validated params, fixed hosts, TTL cache)
+    if (url.pathname === '/api/datagov' || url.pathname === '/api/ckan') {
+      const isDatagov = url.pathname === '/api/datagov';
+      const apiKey = (isDatagov && (url.searchParams.get('api_key') || env.DATAGOV_API_KEY)) || '';
+      if (isDatagov && !apiKey) {
+        return jsonResponse(
           {
-            status: 502,
-            headers: {
-              'Content-Type': 'application/json',
-              ...CORS_HEADERS,
-            },
-          }
+            error:
+              'DATAGOV_API_KEY is not configured on the Worker. Create a free key at https://data.gov.in (My Account) and run: wrangler secret put DATAGOV_API_KEY',
+          },
+          503
         );
       }
-    }
-
-    // 4. CORS-safe Proxy for OpenCity CKAN API
-    if (url.pathname === '/api/ckan') {
-      const query = url.searchParams.get('q') || 'delhi';
-      const resourceId = url.searchParams.get('resource_id') || '';
+      const target = isDatagov
+        ? buildDatagovTarget(url.searchParams, apiKey)
+        : buildCkanTarget(url.searchParams);
+      if (!target.ok) return jsonResponse({ error: target.error }, 400);
 
       try {
-        const targetUrl = resourceId
-          ? `https://data.opencity.in/api/3/action/datastore_search?resource_id=${encodeURIComponent(
-              resourceId
-            )}&limit=200`
-          : `https://data.opencity.in/api/3/action/package_search?q=${encodeURIComponent(
-              query
-            )}&rows=10`;
-        const upstream = await fetch(targetUrl, {
-          headers: { Accept: 'application/json' },
+        const result = await fetchCached(target.cacheKey, async () => {
+          const upstream = await fetch(target.url, { headers: { Accept: 'application/json' } });
+          return { status: upstream.status, body: await upstream.text() };
         });
-        const data = await upstream.json();
-        return new Response(JSON.stringify({ source: 'opencity-ckan-live', ...data }), {
+        return new Response(upstreamErrorBody(result.status, result.body), {
+          status: result.status,
           headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=300',
+            'Cache-Control': result.status === 200 ? 'public, max-age=300' : 'no-store',
+            'X-Proxy-Cache': result.cached ? 'HIT' : 'MISS',
             ...CORS_HEADERS,
           },
         });
       } catch (err: unknown) {
-        return new Response(
-          JSON.stringify({
-            error: err instanceof Error ? err.message : 'OpenCity CKAN upstream error',
-          }),
-          {
-            status: 502,
-            headers: {
-              'Content-Type': 'application/json',
-              ...CORS_HEADERS,
-            },
-          }
+        return jsonResponse(
+          { error: err instanceof Error ? err.message : 'Upstream fetch error' },
+          502
         );
       }
     }
@@ -404,12 +378,23 @@ export default {
             );
           }
 
+          const isLive = body.source_mode === 'live';
+          const liveConfig = isLive ? sanitizeLiveConfig(body.live_config) : null;
+          if (isLive && !liveConfig) {
+            return jsonResponse(
+              { error: 'A live layer needs a valid live_config (portal, resourceId, filters).' },
+              400
+            );
+          }
+
           const payload = {
             slug: sanitizeStr(body.slug || `layer-${Date.now()}`, 100),
             name: sanitizeStr(body.name || 'Community Layer', 150),
             description: sanitizeStr(body.description || '', 1000),
             methodology: sanitizeStr(body.methodology || '', 1000),
             target_state: sanitizeStr(body.target_state || 'All NCR', 80),
+            source_mode: isLive ? 'live' : 'snapshot',
+            live_config: liveConfig,
             layer_type:
               body.layer_type === 'point'
                 ? 'point'
@@ -429,11 +414,12 @@ export default {
             license: sanitizeStr(body.license || 'GODL-India', 40),
             color: sanitizeStr(body.color || '#10b981', 20),
             feature_count: Number(body.feature_count) || 0,
-            available_dates: Array.isArray(body.available_dates)
+            // Live layers never persist source rows: the portal stays the single source of truth.
+            available_dates: !isLive && Array.isArray(body.available_dates)
               ? body.available_dates
               : [],
-            choropleth_by_date: body.choropleth_by_date || {},
-            points_by_date: body.points_by_date || {},
+            choropleth_by_date: isLive ? {} : body.choropleth_by_date || {},
+            points_by_date: isLive ? {} : body.points_by_date || {},
           };
 
           const res = await fetch(`${sbUrl}/rest/v1/community_layers`, {

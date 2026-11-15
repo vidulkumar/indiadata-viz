@@ -102,6 +102,7 @@ export interface VerifiedApiPreset {
   description: string;
 }
 
+// Only IDs confirmed against the live portal belong here. Add others by Resource ID on the Upload page.
 export const VERIFIED_API_PRESETS: VerifiedApiPreset[] = [
   {
     id: 'cpcb-realtime-aqi',
@@ -114,30 +115,6 @@ export const VERIFIED_API_PRESETS: VerifiedApiPreset[] = [
     sourceUrl: 'https://data.gov.in/resource/real-time-air-quality-index-various-locations',
     description:
       'Live hourly pollutant averages (PM2.5, PM10, NO2, SO2) with station GPS coordinates from CPCB.',
-  },
-  {
-    id: 'nhp-hospital-directory',
-    label: 'National Health Portal (NHP) — Verified Hospital Directory',
-    resourceId: '7d208ae4-5d65-47ec-8c80-209d1247d646',
-    portal: 'data.gov.in',
-    category: 'Public Health',
-    unit: 'Beds',
-    publisher: 'Ministry of Health and Family Welfare (MoHFW)',
-    sourceUrl: 'https://data.gov.in/catalog/hospital-directory-national-health-portal',
-    description:
-      'State and district directory of public and empaneled hospitals with coordinates and bed counts.',
-  },
-  {
-    id: 'cgwb-groundwater-telemetry',
-    label: 'CGWB / NWIC — District Ground Water Extraction & Telemetry',
-    resourceId: '6f4b3e1a-9c82-4d30-a15b-8e2f90c41d2e',
-    portal: 'data.gov.in',
-    category: 'Water & Hydrology',
-    unit: '%',
-    publisher: 'Central Ground Water Board (Ministry of Jal Shakti)',
-    sourceUrl: 'https://cgwb.gov.in/en/dynamic-ground-water-resources-india',
-    description:
-      'Dynamic ground water resources assessment — annual recharge, extraction stage, and block status.',
   },
 ];
 

@@ -11,6 +11,7 @@ import {
   AqiDisplayMode,
   FocusHubKey,
   CommunityCatalogLayer,
+  LiveSourceConfig,
   VIRIDIS_TEAL_AMBER,
   VerifiedOverlayLayerConfig,
   VerifiedPointFeature,
@@ -25,6 +26,7 @@ import {
 import { UploadDataPage } from './components/UploadDataPage';
 import CompareModal from './components/CompareModal';
 import { BenchmarkChart } from './components/CivicCharts';
+import { applyLiveData, fetchLiveRows } from './lib/liveSource';
 import {
   Map as MapIcon,
   Layers,
@@ -370,9 +372,14 @@ export function App() {
                 ? r.available_dates
                 : Object.keys(r.choropleth_by_date || {});
             const activeDate = dates[dates.length - 1] || 'Latest';
+            const isLive = r.source_mode === 'live' && Boolean(r.live_config);
             return {
               id: r.slug,
               slug: r.slug,
+              sourceMode: isLive ? 'live' : 'snapshot',
+              liveConfig: isLive ? (r.live_config as LiveSourceConfig) : undefined,
+              liveLoaded: false,
+              liveInfo: isLive ? { state: 'idle' } : undefined,
               name: r.name,
               description: r.description || '',
               methodology: r.methodology || '',
@@ -403,6 +410,55 @@ export function App() {
       }
     })();
   }, []);
+
+  // Live-linked layers: rows are pulled from the source portal when the layer is shown and
+  // joined to the standard boundary codes in memory. Nothing is written back to the database.
+  const liveInFlightRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const pending = customLayers.filter(
+      (l) =>
+        l.sourceMode === 'live' &&
+        l.visible &&
+        !l.liveLoaded &&
+        l.liveConfig &&
+        l.liveInfo?.state !== 'error' &&
+        !liveInFlightRef.current.has(l.id)
+    );
+    for (const layer of pending) {
+      const cfg = layer.liveConfig as LiveSourceConfig;
+      const tier = regionsByTier[layer.boundaryLevel || 'district'] || [];
+      if (layer.type === 'choropleth' && tier.length === 0) continue; // boundaries still loading
+
+      liveInFlightRef.current.add(layer.id);
+      setCustomLayers((prev) =>
+        prev.map((x) => (x.id === layer.id ? { ...x, liveInfo: { state: 'loading' } } : x))
+      );
+      fetchLiveRows(cfg, { maxRows: cfg.maxRows ?? 2000 })
+        .then((res) => {
+          setCustomLayers((prev) =>
+            prev.map((x) => (x.id === layer.id ? applyLiveData(x, res.rows, tier) : x))
+          );
+        })
+        .catch((err: unknown) => {
+          setCustomLayers((prev) =>
+            prev.map((x) =>
+              x.id === layer.id
+                ? {
+                    ...x,
+                    liveInfo: {
+                      state: 'error',
+                      message: err instanceof Error ? err.message : 'Could not reach the source portal',
+                    },
+                  }
+                : x
+            )
+          );
+        })
+        .finally(() => {
+          liveInFlightRef.current.delete(layer.id);
+        });
+    }
+  }, [customLayers, regionsByTier]);
 
   // Detect user's current district via GPS + Point-in-Polygon check
   useEffect(() => {
@@ -597,12 +653,23 @@ export function App() {
       shortTitle: layer.metricLabel || layer.name,
       category: 'uploaded',
       categoryLabel: `Uploaded (${layer.boundaryLevel?.toUpperCase() || 'GPS'})`,
-      geometryLabel:
-        layer.type === 'point'
-          ? `GPS Points (${layer.featureCount})`
-          : layer.type === 'line'
-            ? `Corridor Lines (${layer.featureCount})`
-            : `${layer.boundaryLevel?.toUpperCase()} Polygons (${layer.featureCount})`,
+      geometryLabel: (() => {
+        const base =
+          layer.type === 'point'
+            ? `GPS Points (${layer.featureCount})`
+            : layer.type === 'line'
+              ? `Corridor Lines (${layer.featureCount})`
+              : `${layer.boundaryLevel?.toUpperCase()} Polygons (${layer.featureCount})`;
+        if (layer.sourceMode !== 'live') return base;
+        const info = layer.liveInfo;
+        if (info?.state === 'loading') return 'LIVE · fetching from source…';
+        if (info?.state === 'error') return `LIVE · source unavailable (${info.message || 'error'})`;
+        if (info?.state === 'ready') {
+          const unmatched = info.unmatched?.length || 0;
+          return `LIVE · ${info.matched}/${info.total} rows mapped${unmatched ? ` · ${unmatched} names unmatched` : ''}`;
+        }
+        return 'LIVE · fetched when shown';
+      })(),
       unit: layer.unit || '',
       publisher: layer.publisher || 'Verified Contributor',
       sourceUrl: layer.sourceUrl || '',
@@ -703,8 +770,22 @@ export function App() {
     } else if (item.kind === 'custom' && item.customLayer) {
       const targetId = item.customLayer.id;
       const nextVisible = !item.checked;
+      // Live layers refetch when re-shown after a failure or once the 5-minute proxy cache has expired
+      const staleLive =
+        item.customLayer.sourceMode === 'live' &&
+        nextVisible &&
+        (item.customLayer.liveInfo?.state === 'error' ||
+          Date.now() - (item.customLayer.liveInfo?.fetchedAt ?? 0) > 5 * 60 * 1000);
       setCustomLayers((prev) =>
-        prev.map((l) => (l.id === targetId ? { ...l, visible: nextVisible } : l))
+        prev.map((l) =>
+          l.id === targetId
+            ? {
+                ...l,
+                visible: nextVisible,
+                ...(staleLive ? { liveLoaded: false, liveInfo: { state: 'idle' as const } } : {}),
+              }
+            : l
+        )
       );
       if (nextVisible && item.customLayer.type === 'choropleth') {
         setActiveCustomChoroplethId(targetId);
@@ -779,7 +860,17 @@ export function App() {
       .filter((r) => r.geojson)
       .map((r) => {
         const val = getRegionChoroplethValue(r);
-        const fillColor = getColorForValue(val, stops);
+        // Regions the active custom layer has no value for stay neutral instead of borrowing a built-in metric's colour
+        const customActive =
+          Boolean(activeCustomChoropleth) && activeCustomChoropleth?.boundaryLevel === r.level;
+        const customDate =
+          activeCustomChoropleth?.activeDate ||
+          activeCustomChoropleth?.availableDates?.[0] ||
+          'Latest';
+        const hasCustomValue =
+          typeof activeCustomChoropleth?.choroplethByDate?.[customDate]?.[r.code] === 'number';
+        const fillColor =
+          customActive && !hasCustomValue ? '#334155' : getColorForValue(val, stops);
         return {
           type: 'Feature',
           properties: {
@@ -1420,8 +1511,10 @@ export function App() {
     }
   };
 
-  // Publish layer from Dedicated Upload Page (`/upload`)
+  // Publish layer from Dedicated Upload Page (`/upload`).
+  // Live layers persist only their mapping definition; snapshot layers persist their rows.
   const handlePublishLayer = async (newLayer: CustomLayer) => {
+    const isLive = newLayer.sourceMode === 'live' && Boolean(newLayer.liveConfig);
     try {
       const endpoint = isLocalhost
         ? '/api/local/community-layers'
@@ -1445,9 +1538,11 @@ export function App() {
           license: newLayer.license || 'GODL-India',
           color: newLayer.color,
           feature_count: newLayer.featureCount,
-          available_dates: newLayer.availableDates || ['Latest'],
-          choropleth_by_date: newLayer.choroplethByDate || {},
-          points_by_date: newLayer.pointsByDate || {},
+          source_mode: isLive ? 'live' : 'snapshot',
+          live_config: isLive ? newLayer.liveConfig : null,
+          available_dates: isLive ? [] : newLayer.availableDates || ['Latest'],
+          choropleth_by_date: isLive ? {} : newLayer.choroplethByDate || {},
+          points_by_date: isLive ? {} : newLayer.pointsByDate || {},
         }),
       });
     } catch {

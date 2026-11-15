@@ -1,7 +1,14 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  buildCkanTarget,
+  buildDatagovTarget,
+  fetchCached,
+  sanitizeLiveConfig,
+  upstreamErrorBody,
+} from './src/lib/proxyCore';
 // @ts-ignore
 import {
   getLocalDb,
@@ -28,6 +35,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown) {
 }
 
 function localSqliteApiPlugin(): Plugin {
+  const devEnv = loadEnv('development', process.cwd(), '');
   const attachMiddleware = (middlewares: any) => {
     middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
       const rawUrl = req.url || '/';
@@ -110,6 +118,8 @@ function localSqliteApiPlugin(): Plugin {
             available_dates: JSON.parse(r.available_dates_json || '[]'),
             choropleth_by_date: JSON.parse(r.choropleth_by_date_json || '{}'),
             points_by_date: JSON.parse(r.points_by_date_json || '{}'),
+            source_mode: r.source_mode || 'snapshot',
+            live_config: r.live_config_json ? JSON.parse(r.live_config_json) : null,
             created_at: r.created_at,
           }));
           return sendJson(res, 200, { records, source: 'local-sqlite' });
@@ -123,13 +133,20 @@ function localSqliteApiPlugin(): Plugin {
           const raw = await readBody(req);
           const body = JSON.parse(raw || '{}');
           const slug = String(body.slug || `comm-${Date.now()}`).slice(0, 120);
+          const isLive = body.source_mode === 'live';
+          const liveConfig = isLive ? sanitizeLiveConfig(body.live_config) : null;
+          if (isLive && !liveConfig) {
+            return sendJson(res, 400, {
+              error: 'A live layer needs a valid live_config (portal, resourceId, filters).',
+            });
+          }
           const stmt = db.prepare(`
             INSERT OR REPLACE INTO community_layers (
               slug, name, description, methodology, layer_type, boundary_level,
               target_state, category, metric_label, unit, publisher, source_url,
               license, color, feature_count, available_dates_json,
-              choropleth_by_date_json, points_by_date_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              choropleth_by_date_json, points_by_date_json, source_mode, live_config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           stmt.run(
             slug,
@@ -147,9 +164,11 @@ function localSqliteApiPlugin(): Plugin {
             String(body.license || 'GODL-India / CC-BY-4.0'),
             String(body.color || '#14b8a6'),
             Number(body.feature_count || 0),
-            JSON.stringify(Array.isArray(body.available_dates) ? body.available_dates : []),
-            JSON.stringify(body.choropleth_by_date || {}),
-            JSON.stringify(body.points_by_date || {})
+            JSON.stringify(!isLive && Array.isArray(body.available_dates) ? body.available_dates : []),
+            JSON.stringify(isLive ? {} : body.choropleth_by_date || {}),
+            JSON.stringify(isLive ? {} : body.points_by_date || {}),
+            isLive ? 'live' : 'snapshot',
+            liveConfig ? JSON.stringify(liveConfig) : null
           );
           return sendJson(res, 200, { ok: true, slug, source: 'local-sqlite' });
         }
@@ -186,30 +205,32 @@ function localSqliteApiPlugin(): Plugin {
           return sendJson(res, 200, { ok: true, source: 'local-sqlite' });
         }
 
-        if (url.pathname === '/api/datagov' && req.method === 'GET') {
-          const resourceId =
-            url.searchParams.get('resource_id') || '3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69';
-          const apiKey =
-            url.searchParams.get('api_key') ||
-            '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b';
-          const limit = url.searchParams.get('limit') || '50';
-          const target = new URL(`https://api.data.gov.in/resource/${encodeURIComponent(resourceId)}`);
-          target.searchParams.set('api-key', apiKey);
-          target.searchParams.set('format', 'json');
-          target.searchParams.set('limit', limit);
-          const upstream = await fetch(target.toString());
-          const data = await upstream.json();
-          return sendJson(res, 200, data);
-        }
-
-        if (url.pathname === '/api/ckan' && req.method === 'GET') {
-          const action = url.searchParams.get('action') || 'package_search';
-          const q = url.searchParams.get('q') || 'delhi';
-          const target = new URL(`https://data.opencity.in/api/3/action/${encodeURIComponent(action)}`);
-          target.searchParams.set('q', q);
-          const upstream = await fetch(target.toString());
-          const data = await upstream.json();
-          return sendJson(res, 200, data);
+        if (
+          (url.pathname === '/api/datagov' || url.pathname === '/api/ckan') &&
+          req.method === 'GET'
+        ) {
+          const isDatagov = url.pathname === '/api/datagov';
+          const apiKey = isDatagov
+            ? url.searchParams.get('api_key') || devEnv.DATAGOV_API_KEY || process.env.DATAGOV_API_KEY || ''
+            : '';
+          if (isDatagov && !apiKey) {
+            return sendJson(res, 503, {
+              error:
+                'DATAGOV_API_KEY is not set. Create a free key at https://data.gov.in (My Account) and add DATAGOV_API_KEY=... to .env.local',
+            });
+          }
+          const target = isDatagov
+            ? buildDatagovTarget(url.searchParams, apiKey)
+            : buildCkanTarget(url.searchParams);
+          if (!target.ok) return sendJson(res, 400, { error: target.error });
+          const result = await fetchCached(target.cacheKey, async () => {
+            const upstream = await fetch(target.url, { headers: { Accept: 'application/json' } });
+            return { status: upstream.status, body: await upstream.text() };
+          });
+          res.statusCode = result.status;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('X-Proxy-Cache', result.cached ? 'HIT' : 'MISS');
+          return res.end(upstreamErrorBody(result.status, result.body));
         }
       } catch (err) {
         return sendJson(res, 500, { error: String(err) });
