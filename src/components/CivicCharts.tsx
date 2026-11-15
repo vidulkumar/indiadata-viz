@@ -11,49 +11,44 @@ export function BenchmarkChart({ region, peerRegions, mode }: BenchmarkProps) {
 
   const metrics = [
     {
-      label: 'Density',
-      val: Number(region.population_density || region.density || 0),
+      label: 'Green Cover %',
+      val: Number(region.green_cover_pct || 0),
       mean:
-        safePeers.reduce(
-          (s, r) => s + Number(r.population_density || r.density || 0),
-          0
-        ) / safePeers.length,
-      max: Math.max(
-        ...safePeers.map((r) => Number(r.population_density || r.density || 1)),
-        1
-      ),
+        safePeers.reduce((s, r) => s + Number(r.green_cover_pct || 0), 0) /
+        safePeers.length,
+      max: 35,
     },
     {
-      label: 'Literacy',
+      label: 'CPCB AQI',
+      val: Number(region.aqi_pm25 || 0),
+      mean:
+        safePeers.reduce((s, r) => s + Number(r.aqi_pm25 || 0), 0) /
+        safePeers.length,
+      max: 400,
+    },
+    {
+      label: 'PM2.5 (µg/m³)',
+      val: Number(region.pm25_ugm3 || 0),
+      mean:
+        safePeers.reduce((s, r) => s + Number(r.pm25_ugm3 || 0), 0) /
+        safePeers.length,
+      max: 300,
+    },
+    {
+      label: 'Area (km²)',
+      val: Number(region.area_sq_km || 0),
+      mean:
+        safePeers.reduce((s, r) => s + Number(r.area_sq_km || 0), 0) /
+        safePeers.length,
+      max: Math.max(...safePeers.map((r) => Number(r.area_sq_km || 1)), 1),
+    },
+    {
+      label: 'Literacy %',
       val: Number(region.literacy_rate || 0),
       mean:
         safePeers.reduce((s, r) => s + Number(r.literacy_rate || 0), 0) /
         safePeers.length,
       max: 100,
-    },
-    {
-      label: 'Sex Ratio',
-      val: Number(region.sex_ratio || 865),
-      mean:
-        safePeers.reduce((s, r) => s + Number(r.sex_ratio || 865), 0) /
-        safePeers.length,
-      max: 960,
-    },
-    {
-      label: 'Green %',
-      val: Number(region.green_cover_pct || 15),
-      mean:
-        safePeers.reduce((s, r) => s + Number(r.green_cover_pct || 15), 0) /
-        safePeers.length,
-      max: 40,
-    },
-    {
-      label: 'Schools',
-      val: Number(region.schools_count || 20),
-      mean:
-        safePeers.reduce((s, r) => s + Number(r.schools_count || 20), 0) /
-        safePeers.length,
-      max: Math.max(...safePeers.map((r) => Number(r.schools_count || 1)), 1),
     },
   ];
 
@@ -177,92 +172,6 @@ export function BenchmarkChart({ region, peerRegions, mode }: BenchmarkProps) {
           <span className="w-2.5 h-0.5 bg-slate-400 inline-block" />
           Tier Average ({safePeers.length})
         </span>
-      </div>
-    </div>
-  );
-}
-
-interface TrendProps {
-  title: string;
-  unit: string;
-  series: Array<{ date: string; value: number }>;
-}
-
-export function TimeSeriesTrendChart({ title, unit, series }: TrendProps) {
-  if (!series || series.length < 2) return null;
-
-  const vals = series.map((s) => s.value);
-  const minV = Math.min(...vals);
-  const maxV = Math.max(...vals, minV + 1);
-  const pad = (maxV - minV) * 0.15 || 10;
-  const lo = Math.max(0, minV - pad);
-  const hi = maxV + pad;
-
-  const w = 240;
-  const h = 84;
-  const pts = series.map((s, i) => {
-    const x = 16 + (i / Math.max(series.length - 1, 1)) * (w - 32);
-    const y = h - 18 - ((s.value - lo) / (hi - lo)) * (h - 32);
-    return { ...s, x, y };
-  });
-
-  const polyline = pts.map((p) => `${p.x},${p.y}`).join(' ');
-  const first = series[0].value;
-  const last = series[series.length - 1].value;
-  const deltaPct = first !== 0 ? (((last - first) / first) * 100).toFixed(1) : '0.0';
-
-  return (
-    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="font-semibold text-slate-300">{title}</span>
-        <span
-          className={`font-mono font-semibold tabular-nums px-1.5 py-0.5 rounded text-[10px] ${
-            Number(deltaPct) > 0
-              ? 'bg-amber-500/15 text-amber-300'
-              : 'bg-emerald-500/15 text-emerald-300'
-          }`}
-        >
-          {Number(deltaPct) > 0 ? `+${deltaPct}%` : `${deltaPct}%`} Δ
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-22 overflow-visible">
-        <polyline
-          fill="none"
-          stroke="#14b8a6"
-          strokeWidth="2.2"
-          points={polyline}
-        />
-        {pts.map((p) => (
-          <g key={p.date}>
-            <circle
-              cx={p.x}
-              cy={p.y}
-              r="3.5"
-              className="fill-emerald-400 stroke-slate-950"
-              strokeWidth="1.5"
-            />
-            <text
-              x={p.x}
-              y={p.y - 7}
-              textAnchor="middle"
-              className="fill-slate-200 text-[8.5px] font-mono"
-            >
-              {p.value}
-            </text>
-            <text
-              x={p.x}
-              y={h - 4}
-              textAnchor="middle"
-              className="fill-slate-500 text-[8px] font-mono"
-            >
-              {p.date.slice(5)}
-            </text>
-          </g>
-        ))}
-      </svg>
-      <div className="text-[10px] text-slate-500 flex justify-between tabular-nums">
-        <span>Start: {first} {unit}</span>
-        <span>Latest: {last} {unit}</span>
       </div>
     </div>
   );

@@ -10,15 +10,11 @@ interface Props {
 }
 
 const COMPARE_METRICS: MetricKey[] = [
+  'green_cover_pct',
+  'aqi_pm25',
   'population_density',
-  'population',
   'literacy_rate',
   'sex_ratio',
-  'green_cover_pct',
-  'hospitals_count',
-  'schools_count',
-  'avg_circle_rate',
-  'aqi_pm25',
 ];
 
 export default function CompareModal({
@@ -66,10 +62,10 @@ export default function CompareModal({
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <ArrowLeftRight className="w-5 h-5 text-sky-400" />
-              Side-by-Side Civic &amp; Governance Comparison
+              Side-by-Side Verified Civic Comparison
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Compare Census, Air Quality, Elected Representatives, and Verification Sources across Districts, PCs, ACs, or Wards
+              Compare ISFR 2023 Green Cover, CPCB Air Quality, Census PCA, and Elected Representatives across Districts, PCs, ACs, or Wards
             </p>
           </div>
           <button
@@ -196,7 +192,7 @@ export default function CompareModal({
             ))}
           </div>
 
-          {/* Metrics Comparison Bars with % Delta */}
+          {/* Metrics Comparison Bars with % Delta & Source Link */}
           {regionA && regionB && (
             <div className="space-y-2.5">
               {COMPARE_METRICS.map((key) => {
@@ -227,7 +223,15 @@ export default function CompareModal({
                         {valA.toLocaleString('en-IN')} {cfg.unit}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-slate-300">{cfg.label}</span>
+                        <a
+                          href={cfg.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-slate-300 hover:text-teal-400 inline-flex items-center gap-1"
+                        >
+                          {cfg.label}
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </a>
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-400">
                           {Number(deltaPct) > 0 ? `+${deltaPct}%` : `${deltaPct}%`} Δ
                         </span>

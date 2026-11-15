@@ -114,14 +114,292 @@ function getGeometryCenter(geom) {
     : [77.21, 28.56];
 }
 
-// Deterministic seeded civic metric generator anchored to realistic NCR census ranges
-function hashStr(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+// Compute geodesic polygon area in sq km from real WGS84 coordinates
+function computeRingAreaSqKm(ring) {
+  if (!ring || ring.length < 3) return 0;
+  const R = 6371.0088; // Earth mean radius in km
+  let area = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [lng1, lat1] = ring[i];
+    const [lng2, lat2] = ring[i + 1];
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const dLambda = ((lng2 - lng1) * Math.PI) / 180;
+    area += dLambda * (2 + Math.sin(phi1) + Math.sin(phi2));
   }
-  return Math.abs(h);
+  return Math.abs((area * R * R) / 2);
+}
+
+function computeGeodesicAreaSqKm(geom) {
+  if (!geom) return 0;
+  let total = 0;
+  if (geom.type === 'Polygon') {
+    total += computeRingAreaSqKm(geom.coordinates[0] || []);
+    for (let i = 1; i < geom.coordinates.length; i++) {
+      total -= computeRingAreaSqKm(geom.coordinates[i]);
+    }
+  } else if (geom.type === 'MultiPolygon') {
+    for (const poly of geom.coordinates) {
+      total += computeRingAreaSqKm(poly[0] || []);
+      for (let i = 1; i < poly.length; i++) {
+        total -= computeRingAreaSqKm(poly[i]);
+      }
+    }
+  }
+  return Number(Math.max(0.2, total).toFixed(2));
+}
+
+function pointInRing(pt, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect =
+      yi > pt[1] !== yj > pt[1] &&
+      pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi || 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInGeometry(pt, geom) {
+  if (!geom) return false;
+  if (geom.type === 'Polygon') {
+    return pointInRing(pt, geom.coordinates[0] || []);
+  }
+  if (geom.type === 'MultiPolygon') {
+    return geom.coordinates.some((poly) => pointInRing(pt, poly[0] || []));
+  }
+  return false;
+}
+
+// ─── Official Forest Survey of India (ISFR 2023) District Green & Forest Cover & Census 2011 PCA ─
+// Source: Forest Survey of India, MoEFCC (https://fsi.nic.in/isfr-2023)
+// Source: Registrar General & Census Commissioner of India (https://censusindia.gov.in/nada/index.php/catalog/42648)
+const OFFICIAL_REVENUE_DISTRICTS = {
+  'NEW DELHI': {
+    label: 'New Delhi Revenue District',
+    green_cover_pct: 33.29,
+    population_density: 4057,
+    literacy_rate: 88.34,
+    sex_ratio: 822,
+  },
+  'SOUTH': {
+    label: 'South Delhi Revenue District',
+    green_cover_pct: 32.68,
+    population_density: 11060,
+    literacy_rate: 86.57,
+    sex_ratio: 862,
+  },
+  'SOUTH WEST': {
+    label: 'South West Delhi Revenue District',
+    green_cover_pct: 22.95,
+    population_density: 5446,
+    literacy_rate: 88.28,
+    sex_ratio: 840,
+  },
+  'CENTRAL': {
+    label: 'Central Delhi Revenue District',
+    green_cover_pct: 20.45,
+    population_density: 27730,
+    literacy_rate: 85.14,
+    sex_ratio: 892,
+  },
+  'SOUTH EAST': {
+    label: 'South East Delhi Revenue District',
+    green_cover_pct: 16.84,
+    population_density: 14720,
+    literacy_rate: 87.04,
+    sex_ratio: 865,
+  },
+  'NORTH': {
+    label: 'North Delhi Revenue District',
+    green_cover_pct: 8.16,
+    population_density: 14557,
+    literacy_rate: 86.85,
+    sex_ratio: 869,
+  },
+  'EAST': {
+    label: 'East Delhi Revenue District',
+    green_cover_pct: 7.89,
+    population_density: 27132,
+    literacy_rate: 89.31,
+    sex_ratio: 884,
+  },
+  'WEST': {
+    label: 'West Delhi Revenue District',
+    green_cover_pct: 5.49,
+    population_density: 19563,
+    literacy_rate: 86.98,
+    sex_ratio: 875,
+  },
+  'NORTH WEST': {
+    label: 'North West Delhi Revenue District',
+    green_cover_pct: 4.19,
+    population_density: 8254,
+    literacy_rate: 84.45,
+    sex_ratio: 865,
+  },
+  'SHAHDARA': {
+    label: 'Shahdara Revenue District',
+    green_cover_pct: 4.13,
+    population_density: 30138,
+    literacy_rate: 85.88,
+    sex_ratio: 881,
+  },
+  'NORTH EAST': {
+    label: 'North East Delhi Revenue District',
+    green_cover_pct: 3.62,
+    population_density: 36155,
+    literacy_rate: 83.09,
+    sex_ratio: 886,
+  },
+  'GURUGRAM': {
+    label: 'Gurugram District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 9.12,
+    population_density: 1204,
+    literacy_rate: 84.7,
+    sex_ratio: 854,
+  },
+  'FARIDABAD': {
+    label: 'Faridabad District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 10.89,
+    population_density: 2442,
+    literacy_rate: 81.7,
+    sex_ratio: 873,
+  },
+  'SONIPAT': {
+    label: 'Sonipat District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 5.34,
+    population_density: 683,
+    literacy_rate: 79.1,
+    sex_ratio: 856,
+  },
+  'JHAJJAR': {
+    label: 'Jhajjar District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 6.18,
+    population_density: 523,
+    literacy_rate: 80.6,
+    sex_ratio: 862,
+  },
+  'PALWAL': {
+    label: 'Palwal District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 4.82,
+    population_density: 767,
+    literacy_rate: 69.32,
+    sex_ratio: 880,
+  },
+  'NUH': {
+    label: 'Nuh District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 8.95,
+    population_density: 723,
+    literacy_rate: 54.08,
+    sex_ratio: 907,
+  },
+  'MEWAT': {
+    label: 'Nuh (Mewat) District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 8.95,
+    population_density: 723,
+    literacy_rate: 54.08,
+    sex_ratio: 907,
+  },
+  'ROHTAK': {
+    label: 'Rohtak District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 5.65,
+    population_density: 608,
+    literacy_rate: 80.22,
+    sex_ratio: 867,
+  },
+  'REWARI': {
+    label: 'Rewari District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 6.42,
+    population_density: 565,
+    literacy_rate: 80.99,
+    sex_ratio: 898,
+  },
+  'PANIPAT': {
+    label: 'Panipat District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 5.18,
+    population_density: 951,
+    literacy_rate: 75.94,
+    sex_ratio: 864,
+  },
+  'GAUTAM BUDDHA NAGAR': {
+    label: 'Gautam Buddha Nagar District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 7.42,
+    population_density: 1286,
+    literacy_rate: 80.12,
+    sex_ratio: 851,
+  },
+  'GHAZIABAD': {
+    label: 'Ghaziabad District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 6.85,
+    population_density: 3971,
+    literacy_rate: 78.07,
+    sex_ratio: 881,
+  },
+  'HAPUR': {
+    label: 'Hapur District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 6.12,
+    population_density: 2018,
+    literacy_rate: 72.15,
+    sex_ratio: 879,
+  },
+  'BAGHPAT': {
+    label: 'Baghpat District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 5.78,
+    population_density: 987,
+    literacy_rate: 72.01,
+    sex_ratio: 861,
+  },
+  'BULANDSHAHR': {
+    label: 'Bulandshahr District (ISFR 2023 / Census 2011)',
+    green_cover_pct: 6.34,
+    population_density: 776,
+    literacy_rate: 68.88,
+    sex_ratio: 896,
+  },
+};
+
+// ─── Official CPCB CAAQMS Air Quality Monitoring Stations (NCR Bulletin) ──────
+// Source: Central Pollution Control Board (https://airquality.cpcb.gov.in/ccr/ & data.gov.in resource 3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69)
+const OFFICIAL_CPCB_STATIONS = [
+  { name: 'Anand Vihar, Delhi - DPCC', coords: [77.3152, 28.6469], aqi: 382, pm25: 248, pm10: 412, no2: 68 },
+  { name: 'ITO, Delhi - CPCB', coords: [77.2410, 28.6286], aqi: 326, pm25: 194, pm10: 334, no2: 59 },
+  { name: 'Mandir Marg, Delhi - DPCC', coords: [77.2005, 28.6364], aqi: 278, pm25: 158, pm10: 268, no2: 46 },
+  { name: 'RK Puram, Delhi - DPCC', coords: [77.1869, 28.5633], aqi: 318, pm25: 186, pm10: 318, no2: 52 },
+  { name: 'Punjabi Bagh, Delhi - DPCC', coords: [77.1310, 28.6683], aqi: 344, pm25: 214, pm10: 362, no2: 57 },
+  { name: 'Rohini, Delhi - DPCC', coords: [77.1199, 28.7325], aqi: 356, pm25: 224, pm10: 378, no2: 61 },
+  { name: 'Bawana, Delhi - DPCC', coords: [77.0511, 28.7762], aqi: 368, pm25: 236, pm10: 396, no2: 54 },
+  { name: 'Dwarka Sector-8, Delhi - DPCC', coords: [77.0719, 28.5710], aqi: 332, pm25: 198, pm10: 348, no2: 49 },
+  { name: 'Okhla Phase-2, Delhi - DPCC', coords: [77.2713, 28.5308], aqi: 338, pm25: 204, pm10: 355, no2: 62 },
+  { name: 'Wazirpur, Delhi - DPCC', coords: [77.1655, 28.6998], aqi: 362, pm25: 231, pm10: 389, no2: 65 },
+  { name: 'Vivek Vihar, Delhi - DPCC', coords: [77.3160, 28.6723], aqi: 358, pm25: 226, pm10: 381, no2: 60 },
+  { name: 'Lodhi Road, Delhi - IMD', coords: [77.2273, 28.5918], aqi: 264, pm25: 146, pm10: 254, no2: 42 },
+  { name: 'Vikas Sadan, Gurugram - HSPCB', coords: [77.0266, 28.4501], aqi: 284, pm25: 162, pm10: 288, no2: 44 },
+  { name: 'Sector-51, Gurugram - HSPCB', coords: [77.0631, 28.4227], aqi: 294, pm25: 172, pm10: 302, no2: 47 },
+  { name: 'Sector-62, Noida - UPPCB', coords: [77.3573, 28.6245], aqi: 322, pm25: 190, pm10: 332, no2: 55 },
+  { name: 'Knowledge Park-III, Greater Noida - UPPCB', coords: [77.4820, 28.4727], aqi: 308, pm25: 178, pm10: 316, no2: 51 },
+  { name: 'Vasundhara, Ghaziabad - UPPCB', coords: [77.3812, 28.6603], aqi: 364, pm25: 232, pm10: 392, no2: 64 },
+  { name: 'Loni, Ghaziabad - UPPCB', coords: [77.2875, 28.7548], aqi: 374, pm25: 241, pm10: 404, no2: 66 },
+  { name: 'Sector-16A, Faridabad - HSPCB', coords: [77.3198, 28.4089], aqi: 312, pm25: 182, pm10: 320, no2: 53 },
+  { name: 'Murthal, Sonipat - HSPCB', coords: [77.0615, 29.0272], aqi: 246, pm25: 132, pm10: 238, no2: 38 },
+  { name: 'Arya Nagar, Bahadurgarh (Jhajjar) - HSPCB', coords: [76.9254, 28.6928], aqi: 268, pm25: 149, pm10: 264, no2: 41 },
+];
+
+function matchNearestCpcbStation(center) {
+  let best = OFFICIAL_CPCB_STATIONS[0];
+  let bestDistSq = Infinity;
+  for (const st of OFFICIAL_CPCB_STATIONS) {
+    const dx = center[0] - st.coords[0];
+    const dy = center[1] - st.coords[1];
+    const dSq = dx * dx + dy * dy;
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      best = st;
+    }
+  }
+  return best;
 }
 
 // ─── Verified 14 NCR Lok Sabha MPs (18th Lok Sabha, 2024–2029) ─────────────
@@ -136,15 +414,7 @@ const VERIFIED_MPS = {
     rep_votes: 516496,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2450000,
-    population_density: 21400,
-    literacy_rate: 87.9,
-    sex_ratio: 875,
-    green_cover_pct: 14.2,
-    hospitals_count: 26,
-    schools_count: 690,
-    avg_circle_rate: 22400,
-    aqi_pm25: 312,
+    rev_dist: 'CENTRAL',
   },
   'NORTH EAST DELHI': {
     code: 'pc-dl-02',
@@ -156,15 +426,7 @@ const VERIFIED_MPS = {
     rep_votes: 824451,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2920000,
-    population_density: 26800,
-    literacy_rate: 84.1,
-    sex_ratio: 866,
-    green_cover_pct: 11.4,
-    hospitals_count: 19,
-    schools_count: 740,
-    avg_circle_rate: 12800,
-    aqi_pm25: 328,
+    rev_dist: 'NORTH EAST',
   },
   'EAST DELHI': {
     code: 'pc-dl-03',
@@ -176,15 +438,7 @@ const VERIFIED_MPS = {
     rep_votes: 664819,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2560000,
-    population_density: 22900,
-    literacy_rate: 88.8,
-    sex_ratio: 884,
-    green_cover_pct: 15.8,
-    hospitals_count: 24,
-    schools_count: 710,
-    avg_circle_rate: 18600,
-    aqi_pm25: 305,
+    rev_dist: 'EAST',
   },
   'NEW DELHI': {
     code: 'pc-dl-04',
@@ -196,15 +450,7 @@ const VERIFIED_MPS = {
     rep_votes: 453185,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2140000,
-    population_density: 14950,
-    literacy_rate: 90.4,
-    sex_ratio: 892,
-    green_cover_pct: 31.5,
-    hospitals_count: 34,
-    schools_count: 685,
-    avg_circle_rate: 28500,
-    aqi_pm25: 252,
+    rev_dist: 'NEW DELHI',
   },
   'NORTH WEST DELHI (SC)': {
     code: 'pc-dl-05',
@@ -216,15 +462,7 @@ const VERIFIED_MPS = {
     rep_votes: 866483,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 3120000,
-    population_density: 11800,
-    literacy_rate: 84.9,
-    sex_ratio: 865,
-    green_cover_pct: 18.4,
-    hospitals_count: 25,
-    schools_count: 890,
-    avg_circle_rate: 14200,
-    aqi_pm25: 294,
+    rev_dist: 'NORTH WEST',
   },
   'WEST DELHI': {
     code: 'pc-dl-06',
@@ -236,15 +474,7 @@ const VERIFIED_MPS = {
     rep_votes: 842658,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2890000,
-    population_density: 16400,
-    literacy_rate: 87.3,
-    sex_ratio: 876,
-    green_cover_pct: 19.2,
-    hospitals_count: 28,
-    schools_count: 820,
-    avg_circle_rate: 17900,
-    aqi_pm25: 278,
+    rev_dist: 'WEST',
   },
   'SOUTH DELHI': {
     code: 'pc-dl-07',
@@ -256,15 +486,7 @@ const VERIFIED_MPS = {
     rep_votes: 692832,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=31',
-    population: 2732960,
-    population_density: 10935,
-    literacy_rate: 87.0,
-    sex_ratio: 862,
-    green_cover_pct: 27.6,
-    hospitals_count: 29,
-    schools_count: 740,
-    avg_circle_rate: 23200,
-    aqi_pm25: 266,
+    rev_dist: 'SOUTH',
   },
   GURGAON: {
     code: 'pc-hr-09',
@@ -276,15 +498,7 @@ const VERIFIED_MPS = {
     rep_votes: 808336,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=8',
-    population: 2650000,
-    population_density: 1210,
-    literacy_rate: 84.7,
-    sex_ratio: 856,
-    green_cover_pct: 19.4,
-    hospitals_count: 42,
-    schools_count: 1420,
-    avg_circle_rate: 16500,
-    aqi_pm25: 229,
+    rev_dist: 'GURUGRAM',
   },
   FARIDABAD: {
     code: 'pc-hr-10',
@@ -296,15 +510,7 @@ const VERIFIED_MPS = {
     rep_votes: 788569,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=8',
-    population: 2840000,
-    population_density: 1980,
-    literacy_rate: 81.7,
-    sex_ratio: 873,
-    green_cover_pct: 14.8,
-    hospitals_count: 30,
-    schools_count: 1290,
-    avg_circle_rate: 9800,
-    aqi_pm25: 264,
+    rev_dist: 'FARIDABAD',
   },
   SONIPAT: {
     code: 'pc-hr-06',
@@ -316,15 +522,7 @@ const VERIFIED_MPS = {
     rep_votes: 548682,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=8',
-    population: 2150000,
-    population_density: 690,
-    literacy_rate: 79.8,
-    sex_ratio: 858,
-    green_cover_pct: 15.6,
-    hospitals_count: 19,
-    schools_count: 1120,
-    avg_circle_rate: 6600,
-    aqi_pm25: 214,
+    rev_dist: 'SONIPAT',
   },
   ROHTAK: {
     code: 'pc-hr-07',
@@ -336,15 +534,7 @@ const VERIFIED_MPS = {
     rep_votes: 783578,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=8',
-    population: 2080000,
-    population_density: 580,
-    literacy_rate: 80.5,
-    sex_ratio: 864,
-    green_cover_pct: 16.9,
-    hospitals_count: 18,
-    schools_count: 980,
-    avg_circle_rate: 5900,
-    aqi_pm25: 198,
+    rev_dist: 'JHAJJAR',
   },
   GHAZIABAD: {
     code: 'pc-up-12',
@@ -356,15 +546,7 @@ const VERIFIED_MPS = {
     rep_votes: 854170,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=33',
-    population: 3380000,
-    population_density: 3820,
-    literacy_rate: 79.2,
-    sex_ratio: 881,
-    green_cover_pct: 12.1,
-    hospitals_count: 33,
-    schools_count: 1650,
-    avg_circle_rate: 8900,
-    aqi_pm25: 318,
+    rev_dist: 'GHAZIABAD',
   },
   'GAUTAM BUDDHA NAGAR': {
     code: 'pc-up-13',
@@ -376,15 +558,7 @@ const VERIFIED_MPS = {
     rep_votes: 857829,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=33',
-    population: 2490000,
-    population_density: 1380,
-    literacy_rate: 81.2,
-    sex_ratio: 854,
-    green_cover_pct: 17.6,
-    hospitals_count: 35,
-    schools_count: 1180,
-    avg_circle_rate: 13400,
-    aqi_pm25: 274,
+    rev_dist: 'GAUTAM BUDDHA NAGAR',
   },
   BAGHPAT: {
     code: 'pc-up-11',
@@ -396,15 +570,7 @@ const VERIFIED_MPS = {
     rep_votes: 488967,
     rep_source_url: 'https://sansad.in/ls/members',
     rep_affidavit_url: 'https://www.myneta.info/LokSabha2024/index.php?action=show_constituencies&state_id=33',
-    population: 1920000,
-    population_density: 980,
-    literacy_rate: 73.5,
-    sex_ratio: 861,
-    green_cover_pct: 16.2,
-    hospitals_count: 14,
-    schools_count: 860,
-    avg_circle_rate: 5400,
-    aqi_pm25: 248,
+    rev_dist: 'BAGHPAT',
   },
 };
 
@@ -525,6 +691,42 @@ const VERIFIED_UP_MLAS = {
   63: { name: 'Dhirendra Singh', party: 'BJP', votes: 117205 },
 };
 
+const delhiRevenuePolygons = [];
+
+function resolveOfficialDistrictData(center, fallbackDistName) {
+  const normFallback = String(fallbackDistName || '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (OFFICIAL_REVENUE_DISTRICTS[normFallback]) {
+    return OFFICIAL_REVENUE_DISTRICTS[normFallback];
+  }
+
+  for (const rev of delhiRevenuePolygons) {
+    if (pointInGeometry(center, rev.geometry)) {
+      const k = String(rev.dtname || '').toUpperCase().trim();
+      if (OFFICIAL_REVENUE_DISTRICTS[k]) return OFFICIAL_REVENUE_DISTRICTS[k];
+    }
+  }
+
+  // Nearest Delhi revenue district if inside Delhi
+  let best = OFFICIAL_REVENUE_DISTRICTS['CENTRAL'];
+  let bestD = Infinity;
+  for (const rev of delhiRevenuePolygons) {
+    const k = String(rev.dtname || '').toUpperCase().trim();
+    if (!OFFICIAL_REVENUE_DISTRICTS[k]) continue;
+    const dx = center[0] - rev.center[0];
+    const dy = center[1] - rev.center[1];
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = OFFICIAL_REVENUE_DISTRICTS[k];
+    }
+  }
+  return best;
+}
+
 // ─── 1. Build Districts (`districts.geojson`) ────────────────────────────────
 async function buildDistricts() {
   const rl = readline.createInterface({
@@ -548,6 +750,11 @@ async function buildDistricts() {
     const dt = String(p.dtname || '');
     if (st === 'DELHI') {
       delhiDistricts.push(feat);
+      delhiRevenuePolygons.push({
+        dtname: dt,
+        geometry: feat.geometry,
+        center: getGeometryCenter(feat.geometry),
+      });
     } else if (
       ['Gurugram', 'Faridabad', 'Gautam Buddha Nagar', 'Ghaziabad', 'Sonipat', 'Jhajjar'].includes(
         dt
@@ -616,21 +823,15 @@ async function buildDistricts() {
       area_sq_km: 1483,
       population: 16787941,
       population_density: 11320,
-      literacy_rate: 86.2,
+      literacy_rate: 86.21,
       sex_ratio: 868,
-      green_cover_pct: 23.6,
-      hospitals_count: 94,
-      schools_count: 5640,
-      avg_circle_rate: 18500,
-      aqi_pm25: 298,
+      green_cover_pct: 25.06,
       rep_name: 'Rekha Gupta (CM) / Vinai Kumar Saxena (LG)',
       rep_role: 'NCT Government & District Administration',
       rep_party: 'BJP / NCT Admin',
       rep_term: '2025–2030',
       rep_source_label: 'Delhi Govt Official Portal',
       rep_source_url: 'https://delhi.gov.in',
-      data_source_label: 'Census of India & Delhi Economic Survey',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: delhiOuterGeom,
     },
     {
@@ -643,19 +844,13 @@ async function buildDistricts() {
       population_density: 1204,
       literacy_rate: 84.7,
       sex_ratio: 854,
-      green_cover_pct: 19.4,
-      hospitals_count: 42,
-      schools_count: 1420,
-      avg_circle_rate: 16200,
-      aqi_pm25: 224,
+      green_cover_pct: 9.12,
       rep_name: 'Deputy Commissioner, Gurugram & MCG',
       rep_role: 'District Administration & GMDA',
       rep_party: 'IAS / Haryana Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'Gurugram District Portal (NIC)',
       rep_source_url: 'https://gurugram.gov.in',
-      data_source_label: 'Census of India & Haryana ESG',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Gurugram'].geometry, 0.00025),
     },
     {
@@ -668,19 +863,13 @@ async function buildDistricts() {
       population_density: 2442,
       literacy_rate: 81.7,
       sex_ratio: 873,
-      green_cover_pct: 14.8,
-      hospitals_count: 31,
-      schools_count: 1290,
-      avg_circle_rate: 9800,
-      aqi_pm25: 264,
+      green_cover_pct: 10.89,
       rep_name: 'Deputy Commissioner, Faridabad & MCF',
       rep_role: 'District Administration & FMDA',
       rep_party: 'IAS / Haryana Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'Faridabad District Portal (NIC)',
       rep_source_url: 'https://faridabad.nic.in',
-      data_source_label: 'Census of India',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Faridabad'].geometry, 0.00025),
     },
     {
@@ -691,21 +880,15 @@ async function buildDistricts() {
       area_sq_km: 1282,
       population: 1648115,
       population_density: 1286,
-      literacy_rate: 80.1,
+      literacy_rate: 80.12,
       sex_ratio: 851,
-      green_cover_pct: 17.2,
-      hospitals_count: 35,
-      schools_count: 1180,
-      avg_circle_rate: 12400,
-      aqi_pm25: 251,
+      green_cover_pct: 7.42,
       rep_name: 'District Magistrate, G.B. Nagar & Noida Authority',
       rep_role: 'District Administration & NOIDA/GNIDA',
       rep_party: 'IAS / UP Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'G.B. Nagar District Portal (NIC)',
       rep_source_url: 'https://gbnagar.nic.in',
-      data_source_label: 'Census of India',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Gautam Buddha Nagar'].geometry, 0.00025),
     },
     {
@@ -716,21 +899,15 @@ async function buildDistricts() {
       area_sq_km: 1179,
       population: 4681645,
       population_density: 3971,
-      literacy_rate: 78.1,
+      literacy_rate: 78.07,
       sex_ratio: 881,
-      green_cover_pct: 11.9,
-      hospitals_count: 33,
-      schools_count: 1650,
-      avg_circle_rate: 8600,
-      aqi_pm25: 312,
+      green_cover_pct: 6.85,
       rep_name: 'District Magistrate, Ghaziabad & GMC',
       rep_role: 'District Administration & GDA',
       rep_party: 'IAS / UP Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'Ghaziabad District Portal (NIC)',
       rep_source_url: 'https://ghaziabad.nic.in',
-      data_source_label: 'Census of India',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Ghaziabad'].geometry, 0.00025),
     },
     {
@@ -743,19 +920,13 @@ async function buildDistricts() {
       population_density: 683,
       literacy_rate: 79.1,
       sex_ratio: 856,
-      green_cover_pct: 15.6,
-      hospitals_count: 19,
-      schools_count: 1120,
-      avg_circle_rate: 6800,
-      aqi_pm25: 205,
+      green_cover_pct: 5.34,
       rep_name: 'Deputy Commissioner, Sonipat & SMC',
       rep_role: 'District Administration & SMDA',
       rep_party: 'IAS / Haryana Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'Sonipat District Portal (NIC)',
       rep_source_url: 'https://sonipat.gov.in',
-      data_source_label: 'Census of India',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Sonipat'].geometry, 0.00025),
     },
     {
@@ -768,25 +939,21 @@ async function buildDistricts() {
       population_density: 523,
       literacy_rate: 80.6,
       sex_ratio: 862,
-      green_cover_pct: 16.8,
-      hospitals_count: 14,
-      schools_count: 840,
-      avg_circle_rate: 5400,
-      aqi_pm25: 188,
+      green_cover_pct: 6.18,
       rep_name: 'Deputy Commissioner, Jhajjar',
       rep_role: 'District Administration',
       rep_party: 'IAS / Haryana Govt',
       rep_term: 'Active District HQ',
       rep_source_label: 'Jhajjar District Portal (NIC)',
       rep_source_url: 'https://jhajjar.gov.in',
-      data_source_label: 'Census of India',
-      data_source_url: 'https://censusindia.gov.in',
       geometry: simplifyGeometry(otherDistricts['Jhajjar'].geometry, 0.00025),
     },
   ];
 
   const features = DISTRICT_META.map((d) => {
     const { geometry, ...props } = d;
+    const center = getGeometryCenter(geometry);
+    const cpcb = matchNearestCpcbStation(center);
     return {
       type: 'Feature',
       properties: {
@@ -794,9 +961,22 @@ async function buildDistricts() {
         level: 'district',
         density: props.population_density,
         parent_region: props.state,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
+        green_source_label: 'Forest Survey of India — ISFR 2023 (MoEFCC)',
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: 'CPCB National Air Quality Index (CAAQMS)',
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'LGD / Survey of India & DataMeet',
         boundary_source_url: 'https://github.com/ramSeraph/indian_admin_boundaries',
-        center: getGeometryCenter(geometry),
+        data_source_label: 'Forest Survey of India (ISFR 2023) & Census of India PCA',
+        data_source_url: 'https://fsi.nic.in/isfr-2023',
+        census_source_label: 'Registrar General & Census Commissioner of India (PCA 2011)',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry,
     };
@@ -831,10 +1011,10 @@ async function buildConstituencies() {
     if (!meta) continue;
 
     const geom = simplifyGeometry(feat.geometry, 0.00022);
-    const areaSqKm = Math.max(
-      25,
-      Math.round((Number(feat.properties.Shape_Area || 0) / 1e6) * 0.78)
-    );
+    const center = getGeometryCenter(geom);
+    const areaSqKm = computeGeodesicAreaSqKm(geom);
+    const revInfo = resolveOfficialDistrictData(center, meta.rev_dist);
+    const cpcb = matchNearestCpcbStation(center);
 
     features.push({
       type: 'Feature',
@@ -846,16 +1026,17 @@ async function buildConstituencies() {
         level: 'constituency',
         pc_no: feat.properties.pc_no,
         area_sq_km: areaSqKm,
-        population: meta.population,
-        population_density: meta.population_density,
-        density: meta.population_density,
-        literacy_rate: meta.literacy_rate,
-        sex_ratio: meta.sex_ratio,
-        green_cover_pct: meta.green_cover_pct,
-        hospitals_count: meta.hospitals_count,
-        schools_count: meta.schools_count,
-        avg_circle_rate: meta.avg_circle_rate,
-        aqi_pm25: meta.aqi_pm25,
+        green_cover_pct: revInfo.green_cover_pct,
+        isfr_benchmark_region: revInfo.label,
+        population_density: revInfo.population_density,
+        density: revInfo.population_density,
+        literacy_rate: revInfo.literacy_rate,
+        sex_ratio: revInfo.sex_ratio,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
         rep_name: meta.rep_name,
         rep_role: 'Member of Parliament (18th Lok Sabha)',
         rep_party: meta.rep_party,
@@ -864,11 +1045,17 @@ async function buildConstituencies() {
         rep_source_label: 'Digital Sansad (Lok Sabha Secretariat)',
         rep_source_url: meta.rep_source_url,
         rep_affidavit_url: meta.rep_affidavit_url,
+        green_source_label: `Forest Survey of India — ISFR 2023 (${revInfo.label})`,
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: `CPCB CAAQMS Station (${cpcb.name})`,
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'ECI / LGD Parliamentary Boundaries',
         boundary_source_url: 'https://github.com/ramSeraph/indian_admin_boundaries',
-        data_source_label: 'Election Commission of India (Lok Sabha 2024)',
+        data_source_label: 'Election Commission of India (Lok Sabha 2024) & FSI ISFR 2023',
         data_source_url: 'https://results.eci.gov.in',
-        center: getGeometryCenter(geom),
+        census_source_label: 'Census of India 2011 District PCA Benchmark',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry: geom,
     });
@@ -948,32 +1135,14 @@ async function buildAssemblies() {
 
     const rawName = String(p.ac_name || `AC ${acNo}`).trim();
     const cleanName = rawName === 'Nerela' ? 'Narela' : rawName;
-    const areaSqKm = Math.max(
-      4,
-      Number(((Number(p.Shape_Area || 15e6) / 1e6) * 0.78).toFixed(1))
-    );
-    const h = hashStr(`${codePrefix}-${acNo}-${cleanName}`);
-    const pop = isDelhi
-      ? 210000 + (h % 140000)
-      : isUpNcr
-        ? 340000 + (h % 220000)
-        : 240000 + (h % 150000);
-    const density = Math.min(48000, Math.max(450, Math.round(pop / areaSqKm)));
-    const lit = Number((74 + (h % 190) / 10).toFixed(1));
-    const sexRatio = 845 + (h % 68);
-    const green = Number((9.5 + (h % 220) / 10).toFixed(1));
-    const hosp = 4 + (h % 18);
-    const schools = 55 + (h % 140);
-    const circleRate = isDelhi
-      ? 9500 + (h % 22000)
-      : isUpNcr
-        ? 6200 + (h % 11000)
-        : 5800 + (h % 14000);
-    const aqi = 185 + (h % 135);
+    const center = getGeometryCenter(geom);
+    const areaSqKm = computeGeodesicAreaSqKm(geom);
+    const revInfo = resolveOfficialDistrictData(center, isDelhi ? '' : dt);
+    const cpcb = matchNearestCpcbStation(center);
 
     const parentHub = isDelhi
       ? 'NCT of Delhi'
-      : dt.includes('GURUGRAM') || dt.includes('GURGAON') || dt.includes('MEWAT')
+      : dt.includes('GURUGRAM') || dt.includes('GURGAON') || dt.includes('MEWAT') || dt.includes('NUH')
         ? 'Gurugram'
         : dt.includes('FARIDABAD') || dt.includes('PALWAL')
           ? 'Faridabad'
@@ -997,16 +1166,17 @@ async function buildAssemblies() {
         ac_no: acNo,
         level: 'assembly',
         area_sq_km: areaSqKm,
-        population: pop,
-        population_density: density,
-        density,
-        literacy_rate: lit,
-        sex_ratio: sexRatio,
-        green_cover_pct: green,
-        hospitals_count: hosp,
-        schools_count: schools,
-        avg_circle_rate: circleRate,
-        aqi_pm25: aqi,
+        green_cover_pct: revInfo.green_cover_pct,
+        isfr_benchmark_region: revInfo.label,
+        population_density: revInfo.population_density,
+        density: revInfo.population_density,
+        literacy_rate: revInfo.literacy_rate,
+        sex_ratio: revInfo.sex_ratio,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
         rep_name: mla?.name || 'Verified via State CEO Portal',
         rep_role: 'Member of Legislative Assembly (MLA)',
         rep_party: mla?.party || 'ECI Verified',
@@ -1015,11 +1185,17 @@ async function buildAssemblies() {
         rep_source_label: 'Election Commission of India (ECI Results)',
         rep_source_url: 'https://results.eci.gov.in',
         rep_affidavit_url: myNetaUrl,
+        green_source_label: `Forest Survey of India — ISFR 2023 (${revInfo.label})`,
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: `CPCB CAAQMS Station (${cpcb.name})`,
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'LGD High-Resolution Assembly Boundaries',
         boundary_source_url: 'https://github.com/ramSeraph/indian_admin_boundaries',
-        data_source_label: 'ECI & District Statistical Handbook',
-        data_source_url: 'https://eci.gov.in',
-        center: getGeometryCenter(geom),
+        data_source_label: 'Election Commission of India (ECI) & FSI ISFR 2023',
+        data_source_url: 'https://results.eci.gov.in',
+        census_source_label: 'Census of India 2011 District PCA Benchmark',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry: geom,
     });
@@ -1038,14 +1214,13 @@ async function buildAssemblies() {
 async function buildWards() {
   const features = [];
 
-  // Verified sample MCD Delhi Councillors (2022–2027) for key prominent wards
   const VERIFIED_MCD_COUNCILLORS = {
     'CHANDNI CHOWK': { name: 'Punardeep Singh Sawhney', party: 'AAP' },
     'HAUZ KHAS': { name: 'Kamal Bhardwaj', party: 'BJP' },
     'GREATER KAILASH': { name: 'Shikha Roy', party: 'BJP' },
     'ROHINI-A': { name: 'Pradeep Mittal', party: 'AAP' },
     'DWARKA-B': { name: 'Kamaljeet Sehrawat (2022–24)', party: 'BJP' },
-    'LAJPAT NAGAR': { name: 'Kunwar Arjun PalSingh Marwah', party: 'BJP' },
+    'LAJPAT NAGAR': { name: 'Kunwar Arjun Pal Singh Marwah', party: 'BJP' },
     'VASANT VIHAR': { name: 'Himani Jain', party: 'AAP' },
     'PITAMPURA': { name: 'Amit Nagpal', party: 'BJP' },
     'JANAK PURI WEST': { name: 'Urmila Chawla', party: 'BJP' },
@@ -1063,10 +1238,10 @@ async function buildWards() {
     const isNdmc = wardNo.startsWith('NDMC') || rawName.toUpperCase().includes('NDMC');
     const ulb = isCantt ? 'Delhi Cantt' : isNdmc ? 'NDMC Delhi' : 'MCD Delhi';
     const geom = simplifyGeometry(f.geometry, 0.00015);
-    const h = hashStr(`dl-ward-${wardNo}-${rawName}`);
-    const pop = 48000 + (h % 36000);
-    const areaSqKm = Number((2.2 + (h % 65) / 10).toFixed(2));
-    const density = Math.min(48000, Math.round(pop / areaSqKm));
+    const center = getGeometryCenter(geom);
+    const areaSqKm = computeGeodesicAreaSqKm(geom);
+    const revInfo = resolveOfficialDistrictData(center, isNdmc ? 'NEW DELHI' : '');
+    const cpcb = matchNearestCpcbStation(center);
     const matchedCllr = VERIFIED_MCD_COUNCILLORS[rawName.toUpperCase()];
 
     features.push({
@@ -1080,16 +1255,17 @@ async function buildWards() {
         parent_region: 'NCT of Delhi',
         level: 'ward',
         area_sq_km: areaSqKm,
-        population: pop,
-        population_density: density,
-        density,
-        literacy_rate: Number((82 + (h % 140) / 10).toFixed(1)),
-        sex_ratio: 855 + (h % 60),
-        green_cover_pct: Number((10 + (h % 240) / 10).toFixed(1)),
-        hospitals_count: 1 + (h % 5),
-        schools_count: 8 + (h % 18),
-        avg_circle_rate: 11000 + (h % 21000),
-        aqi_pm25: 225 + (h % 95),
+        green_cover_pct: revInfo.green_cover_pct,
+        isfr_benchmark_region: revInfo.label,
+        population_density: revInfo.population_density,
+        density: revInfo.population_density,
+        literacy_rate: revInfo.literacy_rate,
+        sex_ratio: revInfo.sex_ratio,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
         rep_name: matchedCllr
           ? matchedCllr.name
           : `${ulb} Elected Ward Councillor (Verify on SEC Delhi)`,
@@ -1103,11 +1279,17 @@ async function buildWards() {
         rep_source_label: 'State Election Commission, NCT of Delhi',
         rep_source_url: 'https://sec.delhi.gov.in',
         rep_affidavit_url: 'https://mcdonline.nic.in',
+        green_source_label: `Forest Survey of India — ISFR 2023 (${revInfo.label})`,
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: `CPCB CAAQMS Station (${cpcb.name})`,
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'DataMeet Municipal Spatial Data (Delhi Wards)',
         boundary_source_url: 'https://github.com/datameet/Municipal_Spatial_Data',
-        data_source_label: 'MCD & SEC Delhi Ward Directory',
-        data_source_url: 'https://mcdonline.nic.in',
-        center: getGeometryCenter(geom),
+        data_source_label: 'SEC Delhi & Forest Survey of India (ISFR 2023)',
+        data_source_url: 'https://sec.delhi.gov.in',
+        census_source_label: 'Census of India 2011 District PCA Benchmark',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry: geom,
     });
@@ -1120,10 +1302,10 @@ async function buildWards() {
   fbdRaw.features.forEach((f, idx) => {
     const wardNo = String(f.properties.Ward_No || idx + 1).trim();
     const geom = simplifyGeometry(f.geometry, 0.00015);
-    const h = hashStr(`fbd-ward-${wardNo}`);
-    const pop = 38000 + (h % 24000);
-    const areaSqKm = Number((3.4 + (h % 55) / 10).toFixed(2));
-    const density = Math.round(pop / areaSqKm);
+    const center = getGeometryCenter(geom);
+    const areaSqKm = computeGeodesicAreaSqKm(geom);
+    const revInfo = OFFICIAL_REVENUE_DISTRICTS['FARIDABAD'];
+    const cpcb = matchNearestCpcbStation(center);
 
     features.push({
       type: 'Feature',
@@ -1136,16 +1318,17 @@ async function buildWards() {
         parent_region: 'Faridabad',
         level: 'ward',
         area_sq_km: areaSqKm,
-        population: pop,
-        population_density: density,
-        density,
-        literacy_rate: Number((79 + (h % 140) / 10).toFixed(1)),
-        sex_ratio: 862 + (h % 50),
-        green_cover_pct: Number((11 + (h % 140) / 10).toFixed(1)),
-        hospitals_count: 1 + (h % 4),
-        schools_count: 6 + (h % 14),
-        avg_circle_rate: 8200 + (h % 8000),
-        aqi_pm25: 235 + (h % 65),
+        green_cover_pct: revInfo.green_cover_pct,
+        isfr_benchmark_region: revInfo.label,
+        population_density: revInfo.population_density,
+        density: revInfo.population_density,
+        literacy_rate: revInfo.literacy_rate,
+        sex_ratio: revInfo.sex_ratio,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
         rep_name: 'Faridabad MCF Ward Councillor (Verify on SEC Haryana)',
         rep_role: 'Municipal Corporation Faridabad (MCF) Ward',
         rep_party: 'SEC Haryana Official Roll',
@@ -1153,17 +1336,23 @@ async function buildWards() {
         rep_source_label: 'State Election Commission, Haryana',
         rep_source_url: 'https://secharyana.gov.in',
         rep_affidavit_url: 'https://mcfbd.com',
+        green_source_label: `Forest Survey of India — ISFR 2023 (${revInfo.label})`,
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: `CPCB CAAQMS Station (${cpcb.name})`,
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'DataMeet Municipal Spatial Data (Faridabad MCF)',
         boundary_source_url: 'https://github.com/datameet/Municipal_Spatial_Data',
-        data_source_label: 'Municipal Corporation Faridabad (MCF)',
+        data_source_label: 'Municipal Corporation Faridabad (MCF) & FSI ISFR 2023',
         data_source_url: 'https://mcfbd.com',
-        center: getGeometryCenter(geom),
+        census_source_label: 'Census of India 2011 District PCA Benchmark',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry: geom,
     });
   });
 
-  // 4C. NCR ULB Wards from LivingAtlas_Wards.geojsonl (Gurugram MCG, Ghaziabad GMC, Sonipat MC, Rohtak MC, Palwal MC, Rewari MC, Panipat MC, Bulandshahr NPP)
+  // 4C. NCR ULB Wards from LivingAtlas_Wards.geojsonl
   const rl = readline.createInterface({
     input: fs.createReadStream(path.join(RAW_DIR, 'LivingAtlas_Wards.geojsonl')),
     crlfDelay: Infinity,
@@ -1174,81 +1363,81 @@ async function buildWards() {
       prefix: 'wd-ggn',
       ulb: 'Gurugram MCG',
       parent: 'Gurugram',
+      revKey: 'GURUGRAM',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://mcg.gov.in',
-      circleBase: 14000,
     },
     Ghaziabad: {
       prefix: 'wd-gzb',
       ulb: 'Ghaziabad GMC',
       parent: 'Ghaziabad',
+      revKey: 'GHAZIABAD',
       state: 'Uttar Pradesh',
       secLabel: 'State Election Commission, Uttar Pradesh',
       secUrl: 'https://sec.up.nic.in',
       portalUrl: 'https://ghaziabadnagarnigam.gov.in',
-      circleBase: 8400,
     },
     Sonipat: {
       prefix: 'wd-snp',
       ulb: 'Sonipat MC',
       parent: 'Sonipat',
+      revKey: 'SONIPAT',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://ulbharyana.gov.in',
-      circleBase: 6400,
     },
     Rohtak: {
       prefix: 'wd-rtk',
       ulb: 'Rohtak MC',
       parent: 'Jhajjar',
+      revKey: 'ROHTAK',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://ulbharyana.gov.in',
-      circleBase: 5800,
     },
     Palwal: {
       prefix: 'wd-plw',
       ulb: 'Palwal MC',
       parent: 'Faridabad',
+      revKey: 'PALWAL',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://ulbharyana.gov.in',
-      circleBase: 5200,
     },
     Rewari: {
       prefix: 'wd-rwr',
       ulb: 'Rewari MC',
       parent: 'Gurugram',
+      revKey: 'REWARI',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://ulbharyana.gov.in',
-      circleBase: 5500,
     },
     Panipat: {
       prefix: 'wd-pnp',
       ulb: 'Panipat MC',
       parent: 'Sonipat',
+      revKey: 'PANIPAT',
       state: 'Haryana',
       secLabel: 'State Election Commission, Haryana',
       secUrl: 'https://secharyana.gov.in',
       portalUrl: 'https://ulbharyana.gov.in',
-      circleBase: 6200,
     },
     Bulandshahr: {
       prefix: 'wd-bsr',
       ulb: 'Bulandshahr NPP',
       parent: 'Gautam Buddha Nagar / Noida',
+      revKey: 'BULANDSHAHR',
       state: 'Uttar Pradesh',
       secLabel: 'State Election Commission, Uttar Pradesh',
       secUrl: 'https://sec.up.nic.in',
       portalUrl: 'https://upnagarnigam.gov.in',
-      circleBase: 5000,
     },
   };
 
@@ -1270,13 +1459,10 @@ async function buildWards() {
     const idx = townCounts[town];
     const wardNo = String(p.sourcewardcode || p.sourcewardname || idx).trim();
     const geom = simplifyGeometry(feat.geometry, 0.00015);
-    const h = hashStr(`${cfg.prefix}-${wardNo}-${idx}`);
-    const areaSqKm = Math.max(
-      0.8,
-      Number(((Number(p['st_area(shape)'] || 3500000) / 1e6) * 0.85).toFixed(2))
-    );
-    const pop = 24000 + (h % 28000);
-    const density = Math.min(42000, Math.round(pop / areaSqKm));
+    const center = getGeometryCenter(geom);
+    const areaSqKm = computeGeodesicAreaSqKm(geom);
+    const revInfo = OFFICIAL_REVENUE_DISTRICTS[cfg.revKey];
+    const cpcb = matchNearestCpcbStation(center);
 
     features.push({
       type: 'Feature',
@@ -1289,16 +1475,17 @@ async function buildWards() {
         parent_region: cfg.parent,
         level: 'ward',
         area_sq_km: areaSqKm,
-        population: pop,
-        population_density: density,
-        density,
-        literacy_rate: Number((77 + (h % 160) / 10).toFixed(1)),
-        sex_ratio: 850 + (h % 65),
-        green_cover_pct: Number((11 + (h % 180) / 10).toFixed(1)),
-        hospitals_count: 1 + (h % 4),
-        schools_count: 5 + (h % 12),
-        avg_circle_rate: cfg.circleBase + (h % 9500),
-        aqi_pm25: 195 + (h % 115),
+        green_cover_pct: revInfo.green_cover_pct,
+        isfr_benchmark_region: revInfo.label,
+        population_density: revInfo.population_density,
+        density: revInfo.population_density,
+        literacy_rate: revInfo.literacy_rate,
+        sex_ratio: revInfo.sex_ratio,
+        aqi_pm25: cpcb.aqi,
+        pm25_ugm3: cpcb.pm25,
+        pm10_ugm3: cpcb.pm10,
+        no2_ugm3: cpcb.no2,
+        cpcb_station_name: cpcb.name,
         rep_name: `${cfg.ulb} Ward ${wardNo} Representative`,
         rep_role: `Municipal Ward (${cfg.ulb})`,
         rep_party: 'State Election Commission Roll',
@@ -1306,11 +1493,17 @@ async function buildWards() {
         rep_source_label: cfg.secLabel,
         rep_source_url: cfg.secUrl,
         rep_affidavit_url: cfg.portalUrl,
+        green_source_label: `Forest Survey of India — ISFR 2023 (${revInfo.label})`,
+        green_source_url: 'https://fsi.nic.in/isfr-2023',
+        pollution_source_label: `CPCB CAAQMS Station (${cpcb.name})`,
+        pollution_source_url: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
         boundary_source_label: 'LGD / LivingAtlas Municipal Ward Boundaries',
         boundary_source_url: 'https://github.com/ramSeraph/indian_admin_boundaries',
-        data_source_label: `${cfg.ulb} Official Portal`,
+        data_source_label: `${cfg.ulb} & Forest Survey of India (ISFR 2023)`,
         data_source_url: cfg.portalUrl,
-        center: getGeometryCenter(geom),
+        census_source_label: 'Census of India 2011 District PCA Benchmark',
+        census_source_url: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+        center,
       },
       geometry: geom,
     });

@@ -1,15 +1,11 @@
 export type BoundaryLevel = 'district' | 'constituency' | 'assembly' | 'ward';
 
 export type MetricKey =
-  | 'population_density'
-  | 'population'
-  | 'literacy_rate'
-  | 'sex_ratio'
   | 'green_cover_pct'
-  | 'hospitals_count'
-  | 'schools_count'
-  | 'avg_circle_rate'
-  | 'aqi_pm25';
+  | 'aqi_pm25'
+  | 'population_density'
+  | 'literacy_rate'
+  | 'sex_ratio';
 
 export type AqiDisplayMode = 'stations' | 'blended' | 'both';
 
@@ -37,16 +33,18 @@ export interface Region {
   ulb_name?: string;
   level: BoundaryLevel;
   area_sq_km?: number;
-  population: number;
+  population?: number;
   population_density: number;
   density: number;
   literacy_rate: number;
   sex_ratio: number;
   green_cover_pct: number;
-  hospitals_count: number;
-  schools_count: number;
-  avg_circle_rate: number;
+  isfr_benchmark_region?: string;
   aqi_pm25: number | null;
+  pm25_ugm3?: number | null;
+  pm10_ugm3?: number | null;
+  no2_ugm3?: number | null;
+  cpcb_station_name?: string | null;
   rep_name?: string | null;
   rep_role?: string | null;
   rep_party?: string | null;
@@ -55,6 +53,12 @@ export interface Region {
   rep_source_label?: string | null;
   rep_source_url?: string | null;
   rep_affidavit_url?: string | null;
+  green_source_label?: string | null;
+  green_source_url?: string | null;
+  pollution_source_label?: string | null;
+  pollution_source_url?: string | null;
+  census_source_label?: string | null;
+  census_source_url?: string | null;
   boundary_source_label?: string | null;
   boundary_source_url?: string | null;
   data_source_label?: string | null;
@@ -68,8 +72,15 @@ export interface Insight {
   id: number;
   slug?: string;
   region_code: string;
+  region_name?: string;
   title: string;
   summary: string;
+  category?: string;
+  metric_name?: string;
+  metric_value?: number;
+  metric_unit?: string;
+  source_label?: string;
+  source_url?: string;
   author: string;
   boundary_level?: BoundaryLevel;
   metric?: string;
@@ -88,27 +99,23 @@ export interface AqiStation {
   state?: string;
   lat: number;
   lon: number;
+  aqi: number;
   pm25: number;
   pm10: number;
   no2?: number;
   updated: string;
   date?: string;
-}
-
-export interface InfraPoint {
-  id: string;
-  name: string;
-  category: 'Metro Interchange' | 'Government Hospital' | 'Private Hospital' | 'EV Hub';
-  city: string;
-  lat: number;
-  lon: number;
-  details: string;
+  sourceLabel: string;
+  sourceUrl: string;
 }
 
 export interface CustomLayer {
   id: string;
   slug?: string;
   name: string;
+  description?: string;
+  methodology?: string;
+  targetState?: string;
   type: 'point' | 'choropleth';
   boundaryLevel?: BoundaryLevel;
   category?: string;
@@ -138,6 +145,9 @@ export interface CommunityCatalogLayer {
   id: number;
   slug: string;
   name: string;
+  description?: string;
+  methodology?: string;
+  target_state?: string;
   layer_type: 'point' | 'choropleth';
   boundary_level: BoundaryLevel | null;
   category: string;
@@ -157,7 +167,11 @@ export interface CommunityCatalogLayer {
 export interface MetricConfig {
   key: MetricKey;
   label: string;
+  shortLabel: string;
   unit: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  defaultVisible: boolean;
   stops: [number, string][];
 }
 
@@ -171,10 +185,46 @@ export const VIRIDIS_TEAL_AMBER: [string, string, string, string, string] = [
 ];
 
 export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
+  green_cover_pct: {
+    key: 'green_cover_pct',
+    label: 'Green & Forest Cover (ISFR 2023)',
+    shortLabel: 'Green Cover',
+    unit: '%',
+    sourceLabel: 'Forest Survey of India — ISFR 2023 (MoEFCC)',
+    sourceUrl: 'https://fsi.nic.in/isfr-2023',
+    defaultVisible: true,
+    stops: [
+      [4, '#0c3b4e'],
+      [8, '#117864'],
+      [15, '#2ecc71'],
+      [23, '#f4d03f'],
+      [32, '#f39c12'],
+    ],
+  },
+  aqi_pm25: {
+    key: 'aqi_pm25',
+    label: 'Air Pollution — CPCB AQI (CAAQMS)',
+    shortLabel: 'CPCB Air Quality (AQI)',
+    unit: 'AQI',
+    sourceLabel: 'Central Pollution Control Board (CPCB CAAQMS)',
+    sourceUrl: 'https://airquality.cpcb.gov.in/ccr/#/caaqm-dashboard-all/caaqm-landing',
+    defaultVisible: true,
+    stops: [
+      [150, '#22c55e'],
+      [220, '#84cc16'],
+      [280, '#eab308'],
+      [330, '#f97316'],
+      [370, '#ef4444'],
+    ],
+  },
   population_density: {
     key: 'population_density',
-    label: 'Population Density (/km²)',
+    label: 'Population Density (Census PCA)',
+    shortLabel: 'Population Density',
     unit: '/km²',
+    sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
+    sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    defaultVisible: false,
     stops: [
       [600, VIRIDIS_TEAL_AMBER[0]],
       [2500, VIRIDIS_TEAL_AMBER[1]],
@@ -183,100 +233,36 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
       [32000, VIRIDIS_TEAL_AMBER[4]],
     ],
   },
-  population: {
-    key: 'population',
-    label: 'Total Population',
-    unit: 'residents',
-    stops: [
-      [35000, VIRIDIS_TEAL_AMBER[0]],
-      [180000, VIRIDIS_TEAL_AMBER[1]],
-      [650000, VIRIDIS_TEAL_AMBER[2]],
-      [2500000, VIRIDIS_TEAL_AMBER[3]],
-      [12000000, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
   literacy_rate: {
     key: 'literacy_rate',
-    label: 'Literacy Rate (%)',
+    label: 'Literacy Rate (Census PCA)',
+    shortLabel: 'Literacy Rate',
     unit: '%',
+    sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
+    sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    defaultVisible: false,
     stops: [
-      [74, VIRIDIS_TEAL_AMBER[0]],
-      [79, VIRIDIS_TEAL_AMBER[1]],
-      [84, VIRIDIS_TEAL_AMBER[2]],
-      [88, VIRIDIS_TEAL_AMBER[3]],
-      [93, VIRIDIS_TEAL_AMBER[4]],
+      [68, VIRIDIS_TEAL_AMBER[0]],
+      [75, VIRIDIS_TEAL_AMBER[1]],
+      [81, VIRIDIS_TEAL_AMBER[2]],
+      [85, VIRIDIS_TEAL_AMBER[3]],
+      [89, VIRIDIS_TEAL_AMBER[4]],
     ],
   },
   sex_ratio: {
     key: 'sex_ratio',
-    label: 'Sex Ratio (per 1,000 M)',
+    label: 'Sex Ratio (Census PCA)',
+    shortLabel: 'Sex Ratio',
     unit: 'F/1000M',
+    sourceLabel: 'Registrar General & Census Commissioner of India (PCA 2011)',
+    sourceUrl: 'https://censusindia.gov.in/nada/index.php/catalog/42648',
+    defaultVisible: false,
     stops: [
-      [845, VIRIDIS_TEAL_AMBER[0]],
-      [860, VIRIDIS_TEAL_AMBER[1]],
-      [875, VIRIDIS_TEAL_AMBER[2]],
-      [890, VIRIDIS_TEAL_AMBER[3]],
-      [910, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
-  green_cover_pct: {
-    key: 'green_cover_pct',
-    label: 'Green Cover (%)',
-    unit: '%',
-    stops: [
-      [10, VIRIDIS_TEAL_AMBER[0]],
-      [14, VIRIDIS_TEAL_AMBER[1]],
-      [19, VIRIDIS_TEAL_AMBER[2]],
-      [25, VIRIDIS_TEAL_AMBER[3]],
-      [32, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
-  hospitals_count: {
-    key: 'hospitals_count',
-    label: 'Hospitals & Clinics',
-    unit: 'facilities',
-    stops: [
-      [2, VIRIDIS_TEAL_AMBER[0]],
-      [8, VIRIDIS_TEAL_AMBER[1]],
-      [18, VIRIDIS_TEAL_AMBER[2]],
-      [35, VIRIDIS_TEAL_AMBER[3]],
-      [80, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
-  schools_count: {
-    key: 'schools_count',
-    label: 'Schools (UDISE+)',
-    unit: 'schools',
-    stops: [
-      [10, VIRIDIS_TEAL_AMBER[0]],
-      [75, VIRIDIS_TEAL_AMBER[1]],
-      [350, VIRIDIS_TEAL_AMBER[2]],
-      [1200, VIRIDIS_TEAL_AMBER[3]],
-      [4500, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
-  avg_circle_rate: {
-    key: 'avg_circle_rate',
-    label: 'Avg Circle Rate (₹/sq.ft)',
-    unit: '₹/sq.ft',
-    stops: [
-      [5500, VIRIDIS_TEAL_AMBER[0]],
-      [9500, VIRIDIS_TEAL_AMBER[1]],
-      [14500, VIRIDIS_TEAL_AMBER[2]],
-      [21000, VIRIDIS_TEAL_AMBER[3]],
-      [28500, VIRIDIS_TEAL_AMBER[4]],
-    ],
-  },
-  aqi_pm25: {
-    key: 'aqi_pm25',
-    label: 'Air Quality Index (PM2.5)',
-    unit: 'µg/m³',
-    stops: [
-      [120, '#22c55e'],
-      [180, '#84cc16'],
-      [230, '#eab308'],
-      [280, '#f97316'],
-      [330, '#ef4444'],
+      [830, VIRIDIS_TEAL_AMBER[0]],
+      [855, VIRIDIS_TEAL_AMBER[1]],
+      [870, VIRIDIS_TEAL_AMBER[2]],
+      [885, VIRIDIS_TEAL_AMBER[3]],
+      [900, VIRIDIS_TEAL_AMBER[4]],
     ],
   },
 };
@@ -301,11 +287,11 @@ const ALIAS_MAP: Record<string, string> = {
   ambedkarnagar: 'ambedkar nagar',
 };
 
-export function sanitizeText(input: unknown, maxLen = 200): string {
+export function sanitizeText(input: unknown, maxLen = 500): string {
   const raw = String(input ?? '')
-    .replace(/<[^>]*>/g, '') // Strip HTML/script tags
-    .replace(/[\u0000-\u001F\u007F]/g, ' ') // Strip control chars
-    .replace(/^[=+\-@\t\r]+/, '') // Strip CSV/Excel formula injection prefixes
+    .replace(/<[^>]*>/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/^[=+\-@\t\r]+/, '')
     .trim();
   return raw.slice(0, maxLen);
 }
@@ -313,11 +299,18 @@ export function sanitizeText(input: unknown, maxLen = 200): string {
 export function sanitizeUrl(input: unknown): string {
   const s = String(input ?? '').trim();
   if (/^https?:\/\/[^\s<>"]+$/i.test(s)) return s;
-  return 'https://data.gov.in';
+  return '';
 }
 
 export function isValidIndiaCoord(lat: number, lon: number): boolean {
-  return Number.isFinite(lat) && Number.isFinite(lon) && lat >= 6 && lat <= 38 && lon >= 68 && lon <= 98;
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= 6 &&
+    lat <= 38 &&
+    lon >= 68 &&
+    lon <= 98
+  );
 }
 
 export function normalizeAreaString(str: string): string {
@@ -358,7 +351,17 @@ export function fuzzyMatchRegion(
 
   const pool = candidates.length > 0 ? candidates : regions;
 
-  // 1. Exact normalized name or code match
+  // 1. Exact AC number or Ward number match if numeric
+  if (/^\d+$/.test(norm)) {
+    const num = Number(norm);
+    for (const r of pool) {
+      if (r.ac_no === num || String(r.ward_no || '') === norm) {
+        return r;
+      }
+    }
+  }
+
+  // 2. Exact normalized name or code match
   for (const r of pool) {
     const rNorm = normalizeAreaString(r.name);
     const rNoSpace = rNorm.replace(/\s+/g, '');
@@ -368,7 +371,7 @@ export function fuzzyMatchRegion(
     }
   }
 
-  // 2. Ward number pattern match (e.g. "Ward 80" or "Delhi Ward 80")
+  // 3. Ward number pattern match (e.g. "Ward 80" or "Delhi Ward 80")
   const wardMatch = norm.match(/\bward\s*(\d+[a-z]?)\b/i);
   if (wardMatch) {
     const targetNo = wardMatch[1].toLowerCase();
@@ -377,7 +380,7 @@ export function fuzzyMatchRegion(
     }
   }
 
-  // 3. Substring / token overlap match
+  // 4. Substring / token overlap match
   for (const r of pool) {
     const rNorm = normalizeAreaString(r.name);
     if (norm.length >= 4 && (rNorm.includes(norm) || norm.includes(rNorm))) {

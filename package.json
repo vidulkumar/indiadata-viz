@@ -1,12 +1,14 @@
 {
   "name": "indiadata-viz",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/seed-local-db.mjs && vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --port 3000",
+    "db:seed": "node scripts/seed-local-db.mjs",
+    "verify": "node scripts/verify-local.mjs && npm run build",
     "sync:boundaries": "node scripts/sync-boundaries.mjs",
     "seed:supabase": "node scripts/seed-supabase.mjs"
   },

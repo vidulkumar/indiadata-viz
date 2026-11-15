@@ -12,141 +12,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-const SAMPLE_NCR_CPCB_RECORDS = [
-  {
-    station: 'Anand Vihar, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    latitude: 28.6476,
-    longitude: 77.3158,
-    pm25: 342,
-    pm10: 410,
-    no2: 68,
-    so2: 18,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'RK Puram, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    latitude: 28.5633,
-    longitude: 77.1869,
-    pm25: 256,
-    pm10: 298,
-    no2: 52,
-    so2: 14,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Punjabi Bagh, Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    latitude: 28.674,
-    longitude: 77.131,
-    pm25: 289,
-    pm10: 334,
-    no2: 59,
-    so2: 15,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Mandir Marg, New Delhi - DPCC',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    latitude: 28.6364,
-    longitude: 77.2011,
-    pm25: 228,
-    pm10: 274,
-    no2: 47,
-    so2: 12,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'ITO, New Delhi - CPCB',
-    city: 'Delhi',
-    state: 'NCT of Delhi',
-    latitude: 28.6286,
-    longitude: 77.241,
-    pm25: 295,
-    pm10: 356,
-    no2: 61,
-    so2: 16,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Sector 51, Gurugram - HSPCB',
-    city: 'Gurugram',
-    state: 'Haryana',
-    latitude: 28.4227,
-    longitude: 77.0667,
-    pm25: 215,
-    pm10: 265,
-    no2: 41,
-    so2: 11,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Sector 62, Noida - IMD',
-    city: 'Noida',
-    state: 'Uttar Pradesh',
-    latitude: 28.6245,
-    longitude: 77.3577,
-    pm25: 268,
-    pm10: 312,
-    no2: 54,
-    so2: 16,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Vasundhara, Ghaziabad - UPPCB',
-    city: 'Ghaziabad',
-    state: 'Uttar Pradesh',
-    latitude: 28.6603,
-    longitude: 77.3572,
-    pm25: 318,
-    pm10: 375,
-    no2: 63,
-    so2: 19,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Sector 16A, Faridabad - HSPCB',
-    city: 'Faridabad',
-    state: 'Haryana',
-    latitude: 28.4088,
-    longitude: 77.3099,
-    pm25: 234,
-    pm10: 280,
-    no2: 46,
-    so2: 14,
-    last_update: '2025-11-15',
-  },
-  {
-    station: 'Murthal Road, Sonipat - HSPCB',
-    city: 'Sonipat',
-    state: 'Haryana',
-    latitude: 28.9931,
-    longitude: 77.0151,
-    pm25: 198,
-    pm10: 242,
-    no2: 38,
-    so2: 11,
-    last_update: '2025-11-15',
-  },
-];
-
-const SAMPLE_OPENCITY_RECORDS = [
-  { Ward_Name: 'Chandni Chowk', ULB: 'MCD Delhi', Dengue_Cases: 34, Solid_Waste_TPD: 48.2 },
-  { Ward_Name: 'Hauz Khas', ULB: 'MCD Delhi', Dengue_Cases: 19, Solid_Waste_TPD: 52.6 },
-  { Ward_Name: 'Greater Kailash', ULB: 'MCD Delhi', Dengue_Cases: 14, Solid_Waste_TPD: 44.1 },
-  { Ward_Name: 'Rohini-A', ULB: 'MCD Delhi', Dengue_Cases: 41, Solid_Waste_TPD: 61.0 },
-  { Ward_Name: 'Dwarka-B', ULB: 'MCD Delhi', Dengue_Cases: 27, Solid_Waste_TPD: 58.4 },
-  { Ward_Name: 'Lajpat Nagar', ULB: 'MCD Delhi', Dengue_Cases: 22, Solid_Waste_TPD: 49.0 },
-  { Ward_Name: 'Vasant Vihar', ULB: 'MCD Delhi', Dengue_Cases: 12, Solid_Waste_TPD: 43.5 },
-  { Ward_Name: 'Pitampura', ULB: 'MCD Delhi', Dengue_Cases: 29, Solid_Waste_TPD: 54.8 },
-];
-
-function sanitizeStr(val: unknown, maxLen = 200): string {
+function sanitizeStr(val: unknown, maxLen = 500): string {
   return String(val ?? '')
     .replace(/<[^>]*>/g, '')
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
@@ -167,27 +33,11 @@ export default {
     if (url.pathname === '/api/datagov') {
       const resourceId =
         url.searchParams.get('resource_id') || '3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69';
-      const apiKey = url.searchParams.get('api_key') || '';
-      const limit = url.searchParams.get('limit') || '500';
+      const apiKey =
+        url.searchParams.get('api_key') ||
+        '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b';
+      const limit = url.searchParams.get('limit') || '100';
       const offset = url.searchParams.get('offset') || '0';
-
-      if (!apiKey || apiKey === 'demo') {
-        return new Response(
-          JSON.stringify({
-            source: 'cloudflare-edge-preset',
-            resource_id: resourceId,
-            count: SAMPLE_NCR_CPCB_RECORDS.length,
-            records: SAMPLE_NCR_CPCB_RECORDS,
-          }),
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=300',
-              ...CORS_HEADERS,
-            },
-          }
-        );
-      }
 
       try {
         const targetUrl = `https://api.data.gov.in/resource/${encodeURIComponent(
@@ -209,11 +59,10 @@ export default {
       } catch (err: unknown) {
         return new Response(
           JSON.stringify({
-            source: 'fallback-after-error',
-            error: err instanceof Error ? err.message : 'Upstream fetch error',
-            records: SAMPLE_NCR_CPCB_RECORDS,
+            error: err instanceof Error ? err.message : 'Upstream data.gov.in fetch error',
           }),
           {
+            status: 502,
             headers: {
               'Content-Type': 'application/json',
               ...CORS_HEADERS,
@@ -225,7 +74,7 @@ export default {
 
     // 2. CORS-safe Proxy for OpenCity CKAN API
     if (url.pathname === '/api/ckan') {
-      const query = url.searchParams.get('q') || 'delhi wards';
+      const query = url.searchParams.get('q') || 'delhi';
       const resourceId = url.searchParams.get('resource_id') || '';
 
       try {
@@ -239,29 +88,21 @@ export default {
         const upstream = await fetch(targetUrl, {
           headers: { Accept: 'application/json' },
         });
-        if (!upstream.ok) throw new Error(`CKAN status ${upstream.status}`);
         const data = await upstream.json();
+        return new Response(JSON.stringify({ source: 'opencity-ckan-live', ...data }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=300',
+            ...CORS_HEADERS,
+          },
+        });
+      } catch (err: unknown) {
         return new Response(
           JSON.stringify({
-            source: 'opencity-ckan-live',
-            records: SAMPLE_OPENCITY_RECORDS,
-            ckan: data,
+            error: err instanceof Error ? err.message : 'OpenCity CKAN upstream error',
           }),
           {
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=300',
-              ...CORS_HEADERS,
-            },
-          }
-        );
-      } catch {
-        return new Response(
-          JSON.stringify({
-            source: 'opencity-edge-preset',
-            records: SAMPLE_OPENCITY_RECORDS,
-          }),
-          {
+            status: 502,
             headers: {
               'Content-Type': 'application/json',
               ...CORS_HEADERS,
@@ -280,7 +121,7 @@ export default {
 
       if (request.method === 'GET') {
         const res = await fetch(
-          `${sbUrl}/rest/v1/community_layers?select=*&order=created_at.desc`,
+          `${sbUrl}/rest/v1/community_layers?select=*&category=neq.archived&order=created_at.desc`,
           {
             headers: {
               apikey: sbKey,
@@ -289,7 +130,7 @@ export default {
           }
         );
         const rows = await res.json();
-        return new Response(JSON.stringify(rows), {
+        return new Response(JSON.stringify({ records: Array.isArray(rows) ? rows : [] }), {
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
         });
       }
@@ -297,25 +138,31 @@ export default {
       if (request.method === 'POST') {
         try {
           const body = (await request.json()) as Record<string, unknown>;
-          const rawUrl = String(body.source_url || 'https://data.gov.in').trim();
-          const safeUrl = /^https?:\/\/[^\s<>"]+$/i.test(rawUrl)
-            ? rawUrl
-            : 'https://data.gov.in';
+          const rawUrl = String(body.source_url || '').trim();
+          if (!/^https?:\/\/[^\s<>"]+$/i.test(rawUrl)) {
+            return new Response(
+              JSON.stringify({ error: 'A valid official https:// source URL is required.' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+            );
+          }
 
           const payload = {
             slug: sanitizeStr(body.slug || `layer-${Date.now()}`, 100),
             name: sanitizeStr(body.name || 'Community Layer', 150),
+            description: sanitizeStr(body.description || '', 1000),
+            methodology: sanitizeStr(body.methodology || '', 1000),
+            target_state: sanitizeStr(body.target_state || 'All NCR', 80),
             layer_type: body.layer_type === 'point' ? 'point' : 'choropleth',
             boundary_level: ['district', 'constituency', 'assembly', 'ward'].includes(
               String(body.boundary_level)
             )
               ? body.boundary_level
               : 'district',
-            category: sanitizeStr(body.category || 'Civic Infrastructure', 80),
+            category: sanitizeStr(body.category || 'Civic Dataset', 80),
             metric_label: sanitizeStr(body.metric_label || 'Value', 80),
             unit: sanitizeStr(body.unit || '', 30),
-            publisher: sanitizeStr(body.publisher || 'Community Contributor', 120),
-            source_url: safeUrl,
+            publisher: sanitizeStr(body.publisher || 'Civic Contributor', 120),
+            source_url: rawUrl,
             license: sanitizeStr(body.license || 'GODL-India', 40),
             color: sanitizeStr(body.color || '#10b981', 20),
             feature_count: Number(body.feature_count) || 0,
@@ -352,6 +199,11 @@ export default {
       }
     }
 
-    return env.ASSETS.fetch(request);
+    // Serve static assets, with SPA fallback to /index.html for routes like /upload
+    const assetRes = await env.ASSETS.fetch(request);
+    if (assetRes.status === 404 && !url.pathname.startsWith('/api/') && !url.pathname.includes('.')) {
+      return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+    }
+    return assetRes;
   },
 };
